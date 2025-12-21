@@ -1,4 +1,3 @@
-# pylint: disable=no-member
 from typing import List
 from pyspark import pipelines as sdp
 from pyspark.sql.functions import col, expr
