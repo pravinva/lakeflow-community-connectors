@@ -1,0 +1,21 @@
+# Local/private files
+
+# Private (not committed)
+COMPLIANCE_CHECKLIST_PRIVATE.md
+
+# Python build artifacts / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OSIPI local config (do not commit real endpoints/tokens)
+sources/osipi/configs/dev_config.json
+sources/osipi/configs/dev_config.local.json
+
+# OSIPI local/reference artifacts (not part of sources submission)
+sources/osipi/research/
+sources/osipi/osipi_databricks_app_token_setup.py
