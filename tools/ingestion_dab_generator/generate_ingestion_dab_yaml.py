@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import math
 from dataclasses import dataclass
@@ -103,6 +104,110 @@ class Row:
     schedule: Optional[str]
     table_config: Dict[str, str]
     weight: int
+
+
+def _find_repo_root(start: Path) -> Optional[Path]:
+    """
+    Best-effort repo root discovery for validation logic.
+    We look for a directory containing `sources/`.
+    """
+    for p in [start] + list(start.parents):
+        if (p / "sources").is_dir():
+            return p
+    return None
+
+
+def _load_lakeflow_connect_class(*, connector_name: str, connector_python_file: Optional[str]) -> type:
+    """
+    Load the LakeflowConnect class from a connector source file.
+
+    By default, assumes the standard repo layout:
+      sources/<connector_name>/<connector_name>.py
+    """
+    if connector_python_file:
+        src_path = Path(connector_python_file).expanduser().resolve()
+    else:
+        repo_root = _find_repo_root(Path(__file__).resolve())
+        if repo_root is None:
+            raise ValueError(
+                "Unable to locate repo root (missing `sources/`). "
+                "Provide --connector-python-file to enable --validate-tables."
+            )
+        src_path = repo_root / "sources" / connector_name / f"{connector_name}.py"
+
+    if not src_path.exists():
+        raise ValueError(f"Connector source file not found: {src_path}")
+
+    module_name = f"_lakeflow_cc_{connector_name}_connector"
+    spec = importlib.util.spec_from_file_location(module_name, str(src_path))
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Unable to load module spec from: {src_path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+
+    cls = getattr(mod, "LakeflowConnect", None)
+    if cls is None:
+        raise ValueError(f"No LakeflowConnect class found in: {src_path}")
+    return cls
+
+
+def _supported_tables_from_class(cls: type, *, init_options: Optional[Dict[str, Any]]) -> List[str]:
+    """
+    Determine supported tables for --validate-tables.
+
+    Prefer static class attributes (TABLES_*) to avoid network calls or requiring
+    specific init options. Fall back to instantiating and calling list_tables().
+    """
+    tables: List[str] = []
+
+    # Prefer TABLES_* lists when present (common pattern in this repo).
+    for attr in dir(cls):
+        if not attr.startswith("TABLES_"):
+            continue
+        v = getattr(cls, attr, None)
+        if isinstance(v, list) and all(isinstance(x, str) for x in v):
+            tables.extend(v)
+    tables = [t for t in tables if isinstance(t, str) and t.strip()]
+    if tables:
+        return sorted(set(tables))
+
+    # Fallback: instantiate then call list_tables (may require init options).
+    try:
+        inst = cls(init_options or {})
+    except Exception as e:
+        raise ValueError(
+            "Unable to instantiate LakeflowConnect for --validate-tables. "
+            "Either implement TABLES_* class lists in the connector, or pass "
+            "--validate-init-options-json with the required init options. "
+            f"Initialization error: {e}"
+        )
+    lt = getattr(inst, "list_tables", None)
+    if not callable(lt):
+        raise ValueError("LakeflowConnect does not define list_tables().")
+    out = lt()
+    if not isinstance(out, list) or not all(isinstance(x, str) for x in out):
+        raise ValueError("list_tables() must return a list[str] to use --validate-tables.")
+    return sorted(set([t.strip() for t in out if t and t.strip()]))
+
+
+def _validate_source_tables(
+    *,
+    connector_name: str,
+    connector_python_file: Optional[str],
+    init_options: Optional[Dict[str, Any]],
+    rows: List[Row],
+) -> None:
+    cls = _load_lakeflow_connect_class(connector_name=connector_name, connector_python_file=connector_python_file)
+    supported = set(_supported_tables_from_class(cls, init_options=init_options))
+    requested = sorted(set(r.source_table for r in rows if r.source_table))
+    unknown = [t for t in requested if t not in supported]
+    if unknown:
+        preview = ", ".join(unknown[:25])
+        more = "" if len(unknown) <= 25 else f" (and {len(unknown) - 25} more)"
+        raise ValueError(
+            "CSV includes unsupported source_table values for this connector: "
+            f"{preview}{more}. Supported tables: {len(supported)}."
+        )
 
 
 def _read_rows(
@@ -354,6 +459,22 @@ def main() -> int:
     p.add_argument("--unpause-jobs", action="store_true", help="Emit jobs as UNPAUSED (default is PAUSED).")
     p.add_argument("--no-variables", action="store_true", help="Inline values instead of ${var.*} variables.")
 
+    p.add_argument(
+        "--validate-tables",
+        action="store_true",
+        help="Validate that source_table values in the CSV are supported by the connector.",
+    )
+    p.add_argument(
+        "--connector-python-file",
+        default=None,
+        help="Path to connector source file for --validate-tables (overrides sources/<connector>/<connector>.py).",
+    )
+    p.add_argument(
+        "--validate-init-options-json",
+        default=None,
+        help="JSON object of init options used only when --validate-tables needs to instantiate the connector.",
+    )
+
     args = p.parse_args()
 
     csv_path = Path(args.input_csv).expanduser().resolve()
@@ -367,6 +488,19 @@ def main() -> int:
         connection_name_override=args.connection_name,
         weight_column=args.weight_column,
     )
+
+    if args.validate_tables:
+        init_opts = None
+        if args.validate_init_options_json:
+            init_opts = json.loads(args.validate_init_options_json)
+            if not isinstance(init_opts, dict):
+                raise ValueError("--validate-init-options-json must be a JSON object (dictionary).")
+        _validate_source_tables(
+            connector_name=args.connector_name,
+            connector_python_file=args.connector_python_file,
+            init_options=init_opts,
+            rows=rows,
+        )
 
     # If any row already has pipeline_group, we keep it (and require all to have it).
     has_any_group = any(r.pipeline_group for r in rows)
