@@ -28,10 +28,10 @@ This connector exposes PI Web API resources as a set of **tables**. Object names
 
 | Category | Tables | Analytics usage |
 |---|---|---|
-| **Discovery & inventory** | `pi_dataservers`, `pi_points`, `pi_point_attributes`, `pi_point_type_catalog` | Asset/tag cataloging, coverage checks, taxonomy standardization, driving selection of downstream ingestion scope. |
-| **Time-series** | `pi_timeseries`, `pi_streamset_recorded`, `pi_interpolated`, `pi_streamset_interpolated`, `pi_plot`, `pi_streamset_plot`, `pi_summary`, `pi_streamset_summary`, `pi_value_at_time`, `pi_recorded_at_time`, `pi_end`, `pi_streamset_end`, `pi_calculated` | Time-series analytics, KPI computation, anomaly detection, feature extraction. StreamSet tables provide scalable multi-tag ingestion. |
-| **Asset Framework (AF)** | `pi_assetservers`, `pi_assetdatabases`, `pi_af_hierarchy`, `pi_element_attributes`, `pi_categories`, `pi_element_templates`, `pi_attribute_templates`, `pi_element_template_attributes`, `pi_analyses`, `pi_analysis_templates` | Model- and template-driven analytics; hierarchy rollups (site/unit/equipment); governed joins of time-series to assets. |
-| **Event Frames** | `pi_event_frames`, `pi_eventframe_templates`, `pi_eventframe_attributes`, `pi_eventframe_template_attributes`, `pi_eventframe_referenced_elements`, `pi_eventframe_acknowledgements`, `pi_eventframe_annotations` | Batch/downtime/alarm analytics; joining events to referenced assets; review/ack workflows and operator notes as features. |
+| **Discovery & inventory** | `pi_dataservers`, `pi_points`, `pi_point_attributes` | Asset/tag cataloging, coverage checks, taxonomy standardization, driving selection of downstream ingestion scope. |
+| **Core time-series** | `pi_streamset_recorded`, `pi_current_value` | Time-series analytics and operational monitoring. StreamSet provides scalable multi-tag ingestion. |
+| **Asset Framework (AF)** | `pi_af_hierarchy`, `pi_element_attributes` | Model-driven analytics; hierarchy rollups (site/unit/equipment); governed joins of time-series to assets. |
+| **Event Frames** | `pi_event_frames` | Batch/downtime/alarm analytics; joining events to referenced assets. |
 | **AF Tables** | `pi_af_tables`, `pi_af_table_rows` | Reference-data enrichment (shift calendars, product masters, operating modes). |
 | **Reference / lookup** | `pi_units_of_measure` | Unit normalization/validation for consistent metrics. |
 | **Governance & diagnostics** | `pi_links`, `pi_errors` | Navigability/exploration (materialized relationships) and observability (connector-side failures as data). |

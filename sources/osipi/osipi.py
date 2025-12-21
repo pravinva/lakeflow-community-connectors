@@ -240,55 +240,23 @@ class LakeflowConnect:
         TABLE_DATASERVERS,
         TABLE_POINTS,
         TABLE_POINT_ATTRIBUTES,
-        TABLE_POINT_TYPE_CATALOG,
     ]
 
     TABLES_TIME_SERIES = [
-        TABLE_TIMESERIES,
         TABLE_STREAMSET_RECORDED,
-        TABLE_INTERPOLATED,
-        TABLE_STREAMSET_INTERPOLATED,
-        TABLE_PLOT,
-        TABLE_STREAMSET_PLOT,
-        TABLE_SUMMARY,
-        TABLE_STREAMSET_SUMMARY,
         TABLE_CURRENT_VALUE,
-        TABLE_VALUE_AT_TIME,
-        TABLE_RECORDED_AT_TIME,
-        TABLE_END,
-        TABLE_STREAMSET_END,
-        TABLE_CALCULATED,
     ]
 
     TABLES_ASSET_FRAMEWORK = [
-        TABLE_ASSET_SERVERS,
-        TABLE_ASSET_DATABASES,
         TABLE_AF_HIERARCHY,
         TABLE_ELEMENT_ATTRIBUTES,
-        TABLE_ELEMENT_TEMPLATES,
-        TABLE_ELEMENT_TEMPLATE_ATTRIBUTES,
-        TABLE_ATTRIBUTE_TEMPLATES,
-        TABLE_CATEGORIES,
-        TABLE_ANALYSES,
-        TABLE_ANALYSIS_TEMPLATES,
-        TABLE_AF_TABLES,
-        TABLE_AF_TABLE_ROWS,
-        TABLE_UNITS_OF_MEASURE,
     ]
 
     TABLES_EVENT_FRAMES = [
         TABLE_EVENT_FRAMES,
-        TABLE_EVENTFRAME_ATTRIBUTES,
-        TABLE_EVENTFRAME_TEMPLATES,
-        TABLE_EVENTFRAME_TEMPLATE_ATTRIBUTES,
-        TABLE_EVENTFRAME_REFERENCED_ELEMENTS,
-        TABLE_EVENTFRAME_ACKS,
-        TABLE_EVENTFRAME_ANNOTATIONS,
     ]
 
     TABLES_GOVERNANCE_DIAGNOSTICS = [
-        TABLE_LINKS,
-        TABLE_ERRORS,
     ]
 
     def __init__(self, options: Dict[str, str]) -> None:
@@ -314,6 +282,8 @@ class LakeflowConnect:
         )
 
     def get_table_schema(self, table_name: str, table_options: Dict[str, str]) -> StructType:
+        if table_name not in set(self.list_tables()):
+            raise ValueError(f"Unsupported table: {table_name}")
         # -----------------------------------------------------------------
         # Schemas (grouped for readability)
         # -----------------------------------------------------------------
@@ -734,6 +704,8 @@ class LakeflowConnect:
         return schema
 
     def read_table_metadata(self, table_name: str, table_options: Dict[str, str]) -> Dict:
+        if table_name not in set(self.list_tables()):
+            raise ValueError(f"Unsupported table: {table_name}")
         # -----------------------------------------------------------------
         # Metadata (grouped for readability)
         # -----------------------------------------------------------------
@@ -802,6 +774,8 @@ class LakeflowConnect:
 
     def read_table(self, table_name: str, start_offset: dict, table_options: Dict[str, str]) -> Tuple[Iterator[dict], dict]:
         self._ensure_auth()
+        if table_name not in set(self.list_tables()):
+            raise ValueError(f"Unsupported table: {table_name}")
 
         # Snapshot offset semantics:
         # For snapshot tables, once we return an "end" offset, subsequent reads with the same offset
