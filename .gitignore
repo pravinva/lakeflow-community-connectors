@@ -21,3 +21,10 @@ sources/osipi/research/
 sources/osipi/osipi_databricks_app_token_setup.py
 # Generated ingestion pipeline specs (do not commit)
 tools/ingestion_dab_generator/dab_template/resources/*_ingestion_pipelines.yml
+
+# Build artifacts / generated outputs (do not commit)
+sources/**/_generated_*_python_source.py
+tools/ingestion_dab_generator/dab_template/.databricks/
+tools/ingestion_dab_generator/dab_template/resources/*_pipelines.yml
+dlt_notebooks/
+tools/ingestion_dab_generator/dlt_notebooks/
