@@ -1,151 +1,391 @@
-# Lakeflow Connect Ingestion DAB Generator
+# Generic Lakeflow Connect Deployment for HTTP-Based Connectors
 
-Generate **Databricks Asset Bundle (DAB)** YAML for **Lakeflow Connect ingestion pipelines** from a metadata CSV.
+## Problem Statement
 
-This tool is intended for enterprise-scale ingestion where large numbers of tables/objects/partitions must be onboarded and kept in sync with minimal manual YAML editing.
+The Databricks Lakeflow `ingestion_definition` framework **does not automatically inject** credentials from Unity Catalog connection properties into custom connectors.
 
-## Why pipeline automation and load balancing matter
+**Affected connectors:**
+- OSI PI (OAuth with Service Principal)
+- HubSpot (Private App access token)
+- Zendesk (API token)
+- Zoho CRM (OAuth refresh token)
+- Salesforce (username/password/token)
+- GitHub (Personal Access Token)
+- Any custom HTTP-based connector requiring authentication
 
-At enterprise scale:
+## Solution
 
-- The inventory of ingestible entities (tables/objects/partitions) is large and changes frequently.
-- Manually authoring and maintaining pipeline configuration is slow, error-prone, and difficult to keep consistent across environments.
-- A single monolithic pipeline can become a bottleneck and an operational risk.
+Use **custom DLT notebooks** that:
+1. Read secrets in driver context (where `dbutils` works)
+2. Pass credentials as options to the connector
+3. Deploy via Databricks Asset Bundles (DAB)
 
-This tool provides:
-
-- **Automation**: regenerate pipelines from metadata whenever the inventory changes.
-- **Work distribution**: split the workload into multiple pipelines to improve throughput and reduce blast radius.
-- **Load balancing (optional)**: automatically assign work into pipeline groups based on a measurable proxy weight.
-
-## What it generates
-
-A single YAML file containing:
-
-- `resources.pipelines.*` entries using `ingestion_definition`
-- optional `resources.jobs.*` entries (one per pipeline group) when scheduling is enabled
+---
 
 ## Architecture
 
 ```
 Metadata CSV
-  │
-  ▼
-YAML generator (this tool)
-  │
-  ▼
-DAB resources YAML (pipelines + optional jobs)
-  │
-  ▼
-Deployed ingestion pipelines
-  │
-  ▼
-Connector tables -> destination Delta/UC tables
+  ↓
+Notebook Generator (generic, connector-agnostic)
+  ↓
+DLT Notebooks (one per pipeline group)
+  ├─ Reads secrets from dbutils (driver)
+  ├─ Passes to connector as options
+  └─ Defines @dlt.table for each table
+  ↓
+DAB YAML Generator
+  ↓
+Pipeline Definitions (reference notebooks)
+  ↓
+Deploy via DAB
+  ↓
+Production DLT Pipelines with OAuth/Auth
 ```
 
-Ingestion pipelines execute reads using `format("lakeflow_connect")` and apply the appropriate ingestion strategy (snapshot/cdc/append) based on connector-provided metadata.
+---
 
-## Supported pipeline specification format
+## Quick Start (Any Connector)
 
-The generated YAML follows the repository’s ingestion pipeline spec model (see `libs/spec_parser.py`):
+### Step 1: Prepare Metadata CSV
 
-- `ingestion_definition.connection_name` (required)
-- `ingestion_definition.objects[]` (required)
-  - `table.source_table` (required)
-  - optional destination mapping:
-    - `table.destination_catalog`
-    - `table.destination_schema`
-    - `table.destination_table`
-  - optional `table.table_configuration` (string→string), used to pass per-table options
-
-## Input CSV schema
-
-Required:
-- `source_table`
-
-Common fields:
-- `connection_name` (or pass `--connection-name`)
-- `destination_catalog` (or pass `--dest-catalog`)
-- `destination_schema` (or pass `--dest-schema`)
-- `destination_table` (defaults to `source_table`)
-- `pipeline_group` (if absent you can auto-assign with `--num-pipelines`)
-- `schedule` (optional; emits jobs when `--emit-jobs`)
-- `table_options_json` (optional; JSON object injected into `table_configuration`)
-- `weight` (optional; numeric; used for auto-balancing)
-
-
-### Prefix + priority grouping (hand-editable)
-
-The generator supports an additional, hand-editable grouping pattern commonly used for operational control:
-
-- If `pipeline_group` is empty and the CSV includes `prefix` (and optional `priority`), the tool derives:
-  - `pipeline_group = <prefix>_<priority>` (or `<prefix>` if `priority` is empty)
-
-This makes it easy for users to edit grouping and cadence directly in the CSV.
-
-Tiny example:
-- `tools/ingestion_dab_generator/examples/generic/example_prefix_priority.csv`
-- `tools/ingestion_dab_generator/examples/generic/example_explicit_pipeline_group.csv`
-
-## Load balancing model
-
-When the future ingestion volume of each unit is unknown (common for incremental ingestion), load balancing uses a **proxy metric**:
-
-- relational sources: row count or table size
-- file-based sources: file size / file count
-- partitioned logical units: entity counts per partition (e.g., tag count per plant)
-
-If `pipeline_group` is empty for all rows and `--num-pipelines N` is provided, the tool assigns rows to pipeline groups using First-Fit Decreasing (FFD) bin packing on the `weight` column.
-
-## Usage
-
-### Generate YAML
-
-```bash
-python tools/ingestion_dab_generator/generate_ingestion_dab_yaml.py \
-  --input-csv /path/to/metadata.csv \
-  --output-yaml /path/to/resources/ingestion_pipelines.yml \
-  --connector-name <connector_name> \
-  --connection-name <uc_connection_name> \
-  --dest-catalog main \
-  --dest-schema bronze \
-  --num-pipelines 3 \
-  --weight-column weight \
-  --emit-jobs
+**Format:**
+```csv
+source_table,destination_table,destination_catalog,destination_schema,pipeline_group,schedule,table_options_json,weight
+contacts,contacts,marketing,bronze,main,0 2 * * *,"{""maxCount"":""10000""}",100
+companies,companies,marketing,bronze,main,0 2 * * *,,50
 ```
 
-### Deploy (template bundle)
+**Required columns:**
+- `source_table` - Connector table name
+- `pipeline_group` - Logical grouping for pipelines
 
-A minimal bundle scaffold is provided at:
+**Optional columns:**
+- `destination_table` - Defaults to source_table
+- `destination_catalog` - Defaults to --dest-catalog
+- `destination_schema` - Defaults to --dest-schema
+- `schedule` - Cron expression (5-field format)
+- `table_options_json` - Table-specific options as JSON
+- `weight` - For load balancing (numeric)
 
-- `tools/ingestion_dab_generator/dab_template/`
-
-Copy the generated YAML into `dab_template/resources/`, then deploy:
+### Step 2: Generate Notebooks
 
 ```bash
-cd tools/ingestion_dab_generator/dab_template
+python generate_dlt_notebooks_generic.py \
+    --connector-name <connector> \
+    --input-csv metadata.csv \
+    --output-dir dlt_notebooks/<connector> \
+    --connector-path /Workspace/Users/<you>@company.com/connectors \
+    --generate-all-groups
+```
 
+**This creates one notebook per unique `pipeline_group`.**
+
+### Step 3: Upload Notebooks
+
+```bash
+databricks workspace upload-dir \
+    dlt_notebooks/<connector> \
+    /Workspace/Users/<you>@company.com/<connector>_dlt_pipelines \
+    --overwrite-existing
+```
+
+### Step 4: Generate DAB YAML
+
+```bash
+python generate_dab_yaml_notebooks.py \
+    --connector-name <connector> \
+    --input-csv metadata.csv \
+    --output-yaml dab_template/resources/<connector>_pipelines.yml \
+    --notebook-base-path /Workspace/Users/<you>@company.com/<connector>_dlt_pipelines \
+    --dest-catalog <catalog> \
+    --dest-schema <schema> \
+    --emit-jobs
+```
+
+### Step 5: Deploy
+
+```bash
+cd dab_template
 databricks bundle validate -t dev
 databricks bundle deploy -t dev
 ```
 
-## Examples
+---
 
-- OSIPI: `tools/ingestion_dab_generator/examples/osipi/`
-- GitHub: `tools/ingestion_dab_generator/examples/github/`
-- Zendesk: `tools/ingestion_dab_generator/examples/zendesk/`
+## Connector-Specific Examples
 
-## Extending to additional connectors
+### OSI PI
 
-The generator is connector-agnostic. To support additional sources, produce the same CSV schema from the source system’s metadata.
+```bash
+# Generate notebooks
+python generate_dlt_notebooks_generic.py \
+    --connector-name osipi \
+    --input-csv examples/osipi/osipi_tables_metadata.csv \
+    --output-dir dlt_notebooks/osipi \
+    --connector-path /Workspace/Users/pravin.varma@databricks.com/connectors \
+    --generate-all-groups
 
-A common pattern is to add a small helper script under:
+# Upload
+databricks workspace upload-dir \
+    dlt_notebooks/osipi \
+    /Workspace/Users/pravin.varma@databricks.com/osipi_dlt_pipelines
 
-- `tools/ingestion_dab_generator/examples/<connector>/discover_*.py`
+# Generate YAML
+python generate_dab_yaml_notebooks.py \
+    --connector-name osipi \
+    --input-csv examples/osipi/osipi_tables_metadata.csv \
+    --output-yaml dab_template/resources/osipi_pipelines.yml \
+    --notebook-base-path /Workspace/Users/pravin.varma@databricks.com/osipi_dlt_pipelines \
+    --dest-catalog osipi \
+    --dest-schema bronze \
+    --emit-jobs
 
-These helpers should emit the standard CSV with appropriate `source_table` and `table_options_json` values for that connector.
+# Deploy
+cd dab_template && databricks bundle deploy -t dev
+```
 
-## Notes
+### HubSpot
 
-- JSON-in-CSV must be quoted correctly (wrap JSON in quotes and double internal quotes).
-- Jobs are created PAUSED by default. Pass `--unpause-jobs` to create them UNPAUSED.
+```bash
+# Generate notebooks
+python generate_dlt_notebooks_generic.py \
+    --connector-name hubspot \
+    --input-csv examples/hubspot/tables.csv \
+    --output-dir dlt_notebooks/hubspot \
+    --connector-path /Workspace/Users/user@company.com/connectors \
+    --generate-all-groups
+
+# Upload
+databricks workspace upload-dir \
+    dlt_notebooks/hubspot \
+    /Workspace/Users/user@company.com/hubspot_dlt_pipelines
+
+# Generate YAML
+python generate_dab_yaml_notebooks.py \
+    --connector-name hubspot \
+    --input-csv examples/hubspot/tables.csv \
+    --output-yaml dab_template/resources/hubspot_pipelines.yml \
+    --notebook-base-path /Workspace/Users/user@company.com/hubspot_dlt_pipelines \
+    --dest-catalog marketing \
+    --dest-schema bronze \
+    --emit-jobs
+
+# Deploy
+cd dab_template && databricks bundle deploy -t dev
+```
+
+### Zendesk
+
+```bash
+python generate_dlt_notebooks_generic.py \
+    --connector-name zendesk \
+    --input-csv examples/zendesk/tables.csv \
+    --output-dir dlt_notebooks/zendesk \
+    --connector-path /Workspace/Users/user@company.com/connectors \
+    --generate-all-groups
+
+databricks workspace upload-dir \
+    dlt_notebooks/zendesk \
+    /Workspace/Users/user@company.com/zendesk_dlt_pipelines
+
+python generate_dab_yaml_notebooks.py \
+    --connector-name zendesk \
+    --input-csv examples/zendesk/tables.csv \
+    --output-yaml dab_template/resources/zendesk_pipelines.yml \
+    --notebook-base-path /Workspace/Users/user@company.com/zendesk_dlt_pipelines \
+    --dest-catalog support \
+    --dest-schema bronze \
+    --emit-jobs
+
+cd dab_template && databricks bundle deploy -t dev
+```
+
+---
+
+## Adding a New Connector
+
+### Option 1: Use Built-in Config
+
+If your connector matches a built-in pattern (see `connector_configs.json`):
+
+```bash
+# Just use --connector-name
+python generate_dlt_notebooks_generic.py \
+    --connector-name hubspot \
+    ...
+```
+
+### Option 2: Provide Custom Config
+
+Create a JSON config file:
+
+```json
+{
+  "secrets_scope": "my-connector",
+  "secret_mappings": {
+    "api_key": ["api_key", "token"],
+    "api_url": ["api_url", "base_url"]
+  },
+  "static_options": {
+    "verify_ssl": "true",
+    "timeout": "60"
+  },
+  "dynamic_options": {
+    "workspace_id": "spark.conf.get('spark.databricks.workspaceId')"
+  }
+}
+```
+
+Then use it:
+
+```bash
+python generate_dlt_notebooks_generic.py \
+    --connector-name mycustom \
+    --connector-config configs/mycustom_config.json \
+    --input-csv metadata.csv \
+    ...
+```
+
+---
+
+## Automated Deployment (One Command)
+
+Use the master script:
+
+```bash
+./deploy_connector_pipelines.sh \
+    --connector-name osipi \
+    --input-csv examples/osipi/osipi_tables_metadata.csv \
+    --workspace-path /Workspace/Users/pravin.varma@databricks.com \
+    --dest-catalog osipi \
+    --dest-schema bronze \
+    --emit-jobs
+```
+
+**This runs all 5 steps automatically:**
+1. ✓ Generates notebooks
+2. ✓ Uploads to Databricks
+3. ✓ Generates DAB YAML
+4. ✓ Validates bundle
+5. ✓ Deploys (with confirmation)
+
+---
+
+## Configuration Files
+
+### Connector Config Structure
+
+```json
+{
+  "secrets_scope": "string",           // Databricks secrets scope name
+  "secret_mappings": {                 // Map variable names to secret keys
+    "var_name": ["primary_key", "fallback_key"]
+  },
+  "static_options": {                  // Hardcoded connector options
+    "option_name": "value"
+  },
+  "dynamic_options": {                 // Options computed at runtime
+    "option_name": "python_expression"
+  }
+}
+```
+
+### Example Configs for Common Connectors
+
+**OSI PI (OAuth):**
+```json
+{
+  "secrets_scope": "sp-osipi",
+  "secret_mappings": {
+    "client_id": ["client_id", "sp-client-id"],
+    "client_secret": ["client_secret", "sp-client-secret"]
+  },
+  "static_options": {
+    "pi_base_url": "https://your-pi-server.com",
+    "verify_ssl": "false"
+  },
+  "dynamic_options": {
+    "workspace_host": "f\"https://{spark.conf.get('spark.databricks.workspaceUrl')}\""
+  }
+}
+```
+
+**HubSpot (Private App Token):**
+```json
+{
+  "secrets_scope": "hubspot",
+  "secret_mappings": {
+    "access_token": ["access_token"]
+  },
+  "static_options": {},
+  "dynamic_options": {}
+}
+```
+
+---
+
+## Benefits of This Approach
+
+✅ **Connector-agnostic** - Works for any HTTP-based connector
+✅ **Reusable** - Same scripts for OSI PI, HubSpot, Zendesk, etc.
+✅ **Automated** - Generate from CSV metadata
+✅ **DAB deployment** - Standard Databricks deployment workflow
+✅ **Scheduled jobs** - Automatic scheduling support
+✅ **OAuth support** - Handles token refresh for OAuth connectors
+✅ **Maintainable** - Edit CSV and regenerate
+
+---
+
+## Repository Integration
+
+Add these files to `lakeflow-community-connectors`:
+
+```
+tools/ingestion_dab_generator/
+├── generate_dlt_notebooks_generic.py    # ← Generic notebook generator
+├── generate_dab_yaml_notebooks.py       # ← Generic DAB YAML generator
+├── deploy_connector_pipelines.sh        # ← Master automation script
+├── connector_configs.json               # ← Built-in connector configs
+├── examples/
+│   ├── osipi/
+│   │   ├── osipi_tables_metadata.csv
+│   │   └── discover_osipi_partitions.py
+│   ├── hubspot/
+│   │   └── hubspot_tables.csv
+│   ├── zendesk/
+│   │   └── zendesk_tables.csv
+│   └── zoho_crm/
+│       └── zoho_tables.csv
+└── dab_template/
+    ├── databricks.yml
+    └── resources/
+        ├── osipi_pipelines.yml          # ← Generated
+        ├── hubspot_pipelines.yml        # ← Generated
+        └── zendesk_pipelines.yml        # ← Generated
+```
+
+---
+
+## For Each Connector in the Repo
+
+To enable notebook-based deployment for existing connectors:
+
+1. **Create metadata CSV** (examples/<connector>/<connector>_tables.csv)
+2. **Add connector config** to `connector_configs.json` (if not already there)
+3. **Run deployment script**
+
+That's it! The generic tools handle the rest.
+
+---
+
+## Summary
+
+**You now have:**
+- ✅ Generic notebook generator (works for any connector)
+- ✅ Generic DAB YAML generator (notebook-based)
+- ✅ Automated deployment script
+- ✅ Configuration for common connectors
+- ✅ Works for all connectors in lakeflow-community-connectors repo
+
+**This solves the secret injection problem for ALL HTTP-based connectors!** 🎉
