@@ -377,7 +377,8 @@ def register_lakeflow_source(spark):
             TABLE_LINKS,
         ]
 
-        def __init__(self, options: Dict[str, str]) -> None:
+        def __init__(self, spark, options: Dict[str, str]) -> None:
+            self.spark = spark
             self.options = options
             self.base_url = (options.get("pi_base_url") or options.get("pi_web_api_url") or "").rstrip("/")
             if not self.base_url:
@@ -952,17 +953,58 @@ def register_lakeflow_source(spark):
             if self._auth_resolved:
                 return
 
-            access_token = self.options.get("access_token")
+            # ✅ ONLY UC Connection approach - no fallbacks!
+            connection_name = self.options.get("databricks.connection")
+
+            if not connection_name:
+                raise ValueError(
+                    "Missing 'databricks.connection' option. "
+                    "This connector requires a UC Connection. "
+                    "Create one with: w.connections.create(...)"
+                )
+
+            # Retrieve full connection object
+            print(f"🔍 Retrieving UC Connection: {connection_name}")
+
+            try:
+                conn_df = self.spark.read.format("connection") \
+                    .option("name", connection_name) \
+                    .load()
+                conn_dict = conn_df.collect()[0].asDict()
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to retrieve UC Connection '{connection_name}': {e}"
+                )
+
+            # Debug: Print what we received
+            print(f"🔍 Connection properties received:")
+            for key in sorted(conn_dict.keys()):
+                value = conn_dict[key]
+                if key in ("client_secret", "password", "token", "refresh_token"):
+                    display_value = "***" if value else "❌ MISSING"
+                else:
+                    display_value = str(value)[:50] if value else "None"
+                print(f"  {key}: {display_value}")
+
+            # Extract auth parameters
+            access_token = conn_dict.get("access_token")
+            workspace_host = conn_dict.get("workspace_host")
+            client_id = conn_dict.get("client_id")
+            client_secret = conn_dict.get("client_secret")
+            username = conn_dict.get("username")
+            password = conn_dict.get("password")
+
+            # Method 1: Bearer token
             if access_token:
+                print("✅ Using bearer token authentication")
                 self.session.headers.update({"Authorization": f"Bearer {access_token}"})
                 self._auth_resolved = True
                 return
 
-            workspace_host = (self.options.get("workspace_host") or "").rstrip("/")
-            client_id = self.options.get("client_id")
-            client_secret = self.options.get("client_secret")
+            # Method 2: OIDC with client credentials
             if workspace_host and client_id and client_secret:
-                if not workspace_host.startswith("http://") and not workspace_host.startswith("https://"):
+                print("✅ Using OIDC client credentials flow")
+                if not workspace_host.startswith("http"):
                     workspace_host = "https://" + workspace_host
 
                 token_url = f"{workspace_host}/oidc/v1/token"
@@ -976,24 +1018,25 @@ def register_lakeflow_source(spark):
                 resp.raise_for_status()
                 token = resp.json().get("access_token")
                 if not token:
-                    raise RuntimeError("OIDC token endpoint did not return access_token")
+                    raise RuntimeError("OIDC endpoint did not return access_token")
+
                 self.session.headers.update({"Authorization": f"Bearer {token}"})
                 self._auth_resolved = True
+                print("✅ OIDC token acquired successfully")
                 return
 
-            username = self.options.get("username")
-            password = self.options.get("password")
+            # Method 3: Basic auth
             if username and password:
+                print("✅ Using basic authentication")
                 self.session.auth = (username, password)
                 self._auth_resolved = True
                 return
 
-            self._auth_resolved = True
-
-        # -----------------------------------------------------------------
-        # Common request / option patterns
-        # -----------------------------------------------------------------
-
+            raise RuntimeError(
+                "No valid authentication credentials found in UC Connection. "
+                f"Connection contained keys: {list(conn_dict.keys())}. "
+                "Expected: access_token, OR (client_id + client_secret + workspace_host), OR (username + password)"
+            )
         def _start_dt_from_offset(self, start_offset: dict) -> Optional[datetime]:
             if start_offset and isinstance(start_offset, dict):
                 off = start_offset.get("offset")
@@ -2885,7 +2928,7 @@ def register_lakeflow_source(spark):
     class LakeflowSource(DataSource):
         def __init__(self, options):
             self.options = options
-            self.lakeflow_connect = LakeflowConnect(options)
+            self.lakeflow_connect = LakeflowConnect(spark, options)  # ✅ Pass spark
 
         @classmethod
         def name(cls):

@@ -1,3 +1,6 @@
+# DEPRECATED: This test uses local dev_config and does not exercise UC Connections only.
+# Use test_uc_connection.py for the recommended UC Connection pattern (no fallbacks).
+
 import sys
 from pathlib import Path
 
@@ -26,6 +29,8 @@ def test_osipi_connector():
     - This connector typically requires a real PI Web API endpoint + a valid Bearer token.
     - If `dev_config.json` is not configured, this test is skipped.
     """
+    pytest.skip("Deprecated in UC-connection-only branch. Use test_uc_connection.py.")
+
 
     # Inject into the shared test_suite namespace so LakeflowConnectTester can instantiate it.
     test_suite.LakeflowConnect = LakeflowConnect
