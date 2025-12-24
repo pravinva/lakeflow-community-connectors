@@ -1089,39 +1089,105 @@ class LakeflowConnect:
         return params
 
     def _get_json(self, path: str, params: Optional[Any] = None) -> dict:
+
         url = f"{self.base_url}{path}"
-        if _as_bool(self.options.get("debug_http"), default=False):
-            print(f"HTTP GET url={url} params={params}")
+
+
+        debug = _as_bool(self.options.get("debug_http"), default=False)
+
+        if debug:
+
+            # DEBUG: Log the actual request details
+
+            print("🔍 DEBUG _get_json:")
+
+            print(f"   URL: {url}")
+
+            print(f"   Headers: {dict(self.session.headers)}")
+
+            print(f"   Auth: {self.session.auth}")
+
+            print(f"   Params: {params}")
+
+            print(f"   verify_ssl: {self.verify_ssl}")
+
+
         for attempt in range(2):
+
             self._ensure_auth()
+
             r = self.session.get(url, params=params, timeout=60, verify=self.verify_ssl)
+
+
             # Some proxies/apps behave differently with a trailing slash.
+
             # Try `.../` on 404, but only use it if it succeeds (avoid breaking servers that 404 on trailing "/").
+
             if r.status_code == 404 and not url.endswith("/"):
+
                 r_slash = self.session.get(url + "/", params=params, timeout=60, verify=self.verify_ssl)
+
                 if r_slash.status_code < 400:
+
                     r = r_slash
+
+
+            if debug:
+
+                print(f"   Response status: {r.status_code}")
+
+                print(f"   Response headers: {dict(r.headers)}")
+
+
             if r.status_code == 401 and attempt == 0:
+
+                if debug:
+
+                    print("   Got 401, retrying auth...")
+
                 self._auth_resolved = False
+
                 self._oidc_access_token = None
+
                 self._oidc_token_expires_at = None
+
                 self.session.headers.pop("Authorization", None)
+
                 self.session.auth = None
+
                 continue
+
+
             try:
+
                 r.raise_for_status()
+
             except requests.HTTPError as e:
+
                 body = (getattr(r, "text", None) or "")[:2000]
+
                 hdrs = {
+
                     k: (v[:200] if isinstance(v, str) else str(v)[:200])
+
                     for k, v in (getattr(r, "headers", {}) or {}).items()
+
                 }
+
                 raise requests.HTTPError(
+
                     f"{e}. Response headers: {hdrs}. Response body (truncated): {body}",
+
                     response=r,
+
                 ) from e
+
+
             return r.json()
+
+
         raise RuntimeError("Authentication failed after retry")
+
 
     def _post_json(self, path: str, payload: Any) -> dict:
         url = f"{self.base_url}{path}"
