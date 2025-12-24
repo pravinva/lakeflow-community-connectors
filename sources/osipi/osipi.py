@@ -1085,6 +1085,8 @@ class LakeflowConnect:
 
     def _get_json(self, path: str, params: Optional[Any] = None) -> dict:
         url = f"{self.base_url}{path}"
+        if _as_bool(self.options.get("debug_http"), default=False):
+            print(f"HTTP GET url={url} params={params}")
         for attempt in range(2):
             self._ensure_auth()
             r = self.session.get(url, params=params, timeout=60, verify=self.verify_ssl)
@@ -1105,7 +1107,14 @@ class LakeflowConnect:
                 r.raise_for_status()
             except requests.HTTPError as e:
                 body = (getattr(r, "text", None) or "")[:2000]
-                raise requests.HTTPError(f"{e}. Response body (truncated): {body}", response=r) from e
+                hdrs = {
+                    k: (v[:200] if isinstance(v, str) else str(v)[:200])
+                    for k, v in (getattr(r, "headers", {}) or {}).items()
+                }
+                raise requests.HTTPError(
+                    f"{e}. Response headers: {hdrs}. Response body (truncated): {body}",
+                    response=r,
+                ) from e
             return r.json()
         raise RuntimeError("Authentication failed after retry")
 
@@ -1126,7 +1135,14 @@ class LakeflowConnect:
                 r.raise_for_status()
             except requests.HTTPError as e:
                 body = (getattr(r, "text", None) or "")[:2000]
-                raise requests.HTTPError(f"{e}. Response body (truncated): {body}", response=r) from e
+                hdrs = {
+                    k: (v[:200] if isinstance(v, str) else str(v)[:200])
+                    for k, v in (getattr(r, "headers", {}) or {}).items()
+                }
+                raise requests.HTTPError(
+                    f"{e}. Response headers: {hdrs}. Response body (truncated): {body}",
+                    response=r,
+                ) from e
             return r.json()
         raise RuntimeError("Authentication failed after retry")
 
