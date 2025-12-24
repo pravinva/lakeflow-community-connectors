@@ -1062,9 +1062,27 @@ def register_lakeflow_source(spark):
             except Exception:
                 pass
 
+            try:
+                keys = sorted(list(self.options.keys()))
+                def present(k: str) -> str:
+                    return "PRESENT" if self.options.get(k) else "MISSING"
+                summary = {
+                    "workspace_host": present("workspace_host"),
+                    "client_id": present("client_id"),
+                    "client_secret": present("client_secret"),
+                    "client_value_tmp": present("client_value_tmp"),
+                    "access_token": present("access_token"),
+                    "username": present("username"),
+                    "password": present("password"),
+                }
+            except Exception:
+                keys = []
+                summary = {}
+
             raise RuntimeError(
                 "No valid authentication credentials found in options. "
-                "Expected one of: access_token, OR (workspace_host + client_id + client_secret/client_value_tmp), OR (username + password)."
+                "Expected one of: access_token, OR (workspace_host + client_id + client_secret/client_value_tmp), OR (username + password). "
+                f"AUTH_OPTIONS_SUMMARY={summary} option_keys={keys}"
             )
 
         def _start_dt_from_offset(self, start_offset: dict) -> Optional[datetime]:
