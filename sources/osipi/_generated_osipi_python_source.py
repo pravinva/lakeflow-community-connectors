@@ -380,9 +380,9 @@ def register_lakeflow_source(spark):
         def __init__(self, spark, options: Dict[str, str]) -> None:
             self.spark = spark
             self.options = options
+            # Base URL can be supplied directly OR come from the UC Connection.
+            # We'll validate it after resolving the UC connection in _ensure_auth.
             self.base_url = (options.get("pi_base_url") or options.get("pi_web_api_url") or "").rstrip("/")
-            if not self.base_url:
-                raise ValueError("Missing required option: pi_base_url (or pi_web_api_url)")
 
             self.session = requests.Session()
             self.session.headers.update({"Accept": "application/json"})
@@ -949,11 +949,24 @@ def register_lakeflow_source(spark):
                 raise ValueError(f"Unknown table: {table_name}")
             return handler()
 
+
         def _ensure_auth(self) -> None:
+            """
+            Authenticate using UC Connection credentials.
+
+            KNOWN ISSUE (Dec 2024):
+            UC Connections currently strips 'client_secret' and 'refresh_token' from 
+            connection object retrieval. Databricks is fixing this (Sheldon Tauro confirmed).
+
+            This implementation supports BOTH:
+            1. Normal property names (client_secret) - will work after fix is merged
+            2. Workaround names (client_value_tmp) - works now with current bug
+
+            The connector automatically detects which naming pattern is used.
+            """
             if self._auth_resolved:
                 return
 
-            # ✅ ONLY UC Connection approach - no fallbacks!
             connection_name = self.options.get("databricks.connection")
 
             if not connection_name:
@@ -963,80 +976,154 @@ def register_lakeflow_source(spark):
                     "Create one with: w.connections.create(...)"
                 )
 
-            # Retrieve full connection object
             print(f"🔍 Retrieving UC Connection: {connection_name}")
 
+            # Retrieve full connection object
             try:
-                conn_df = self.spark.read.format("connection") \
-                    .option("name", connection_name) \
-                    .load()
+                conn_df = self.spark.read.format("connection")                     .option("name", connection_name)                     .load()
                 conn_dict = conn_df.collect()[0].asDict()
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to retrieve UC Connection '{connection_name}': {e}"
                 )
 
-            # Debug: Print what we received
-            print(f"🔍 Connection properties received:")
+            # Debug: Show what we received (mask sensitive values)
+            print(f"🔍 Connection properties retrieved:")
             for key in sorted(conn_dict.keys()):
                 value = conn_dict[key]
-                if key in ("client_secret", "password", "token", "refresh_token"):
-                    display_value = "***" if value else "❌ MISSING"
+                # Mask sensitive values
+                if any(s in key.lower() for s in ["secret", "password", "token", "credential"]):
+                    display_value = "***PRESENT***" if value else "❌ MISSING"
                 else:
-                    display_value = str(value)[:50] if value else "None"
+                    display_value = str(value)[:60] if value else "None"
                 print(f"  {key}: {display_value}")
 
-            # Extract auth parameters
+            # Allow base_url/verify_ssl to come from the UC Connection (common case).
+            if not self.base_url:
+                self.base_url = (conn_dict.get("pi_base_url") or conn_dict.get("pi_web_api_url") or "").rstrip("/")
+            if not self.base_url:
+                raise ValueError(
+                    "Missing required option: pi_base_url (or pi_web_api_url). "
+                    "Provide it in the UC Connection options or as a direct Spark option."
+                )
+            if conn_dict.get("verify_ssl") is not None:
+                self.verify_ssl = _as_bool(conn_dict.get("verify_ssl"), default=True)
+
+            # Extract credentials - try normal names first, then workarounds
             access_token = conn_dict.get("access_token")
             workspace_host = conn_dict.get("workspace_host")
             client_id = conn_dict.get("client_id")
-            client_secret = conn_dict.get("client_secret")
-            username = conn_dict.get("username")
-            password = conn_dict.get("password")
 
-            # Method 1: Bearer token
+            # Try multiple property names for client_secret (normal + workarounds)
+            client_secret = (
+                conn_dict.get("client_secret") or           # Normal (post-fix)
+                conn_dict.get("client_value_tmp") or        # Workaround 1
+                conn_dict.get("client_credential") or       # Workaround 2
+                conn_dict.get("oauth_client_secret") or     # Workaround 3
+                conn_dict.get("sp_app_credential")          # Workaround 4
+            )
+
+            # Try multiple property names for refresh_token
+            refresh_token = (
+                conn_dict.get("refresh_token") or           # Normal (post-fix)
+                conn_dict.get("refresh_value_tmp") or       # Workaround 1
+                conn_dict.get("oauth_refresh_token")        # Workaround 2
+            )
+
+            # Try multiple property names for username/password
+            username = conn_dict.get("username")
+            password = (
+                conn_dict.get("password") or 
+                conn_dict.get("password_value")
+            )
+
+            # Detect if using workaround (for logging)
+            if client_secret and not conn_dict.get("client_secret"):
+                workaround_key = next(
+                    (k for k in ["client_value_tmp", "client_credential", "oauth_client_secret", "sp_app_credential"] 
+                     if conn_dict.get(k)), 
+                    "unknown"
+                )
+                print(f"ℹ️  Using workaround property name: {workaround_key}")
+                print("   (UC bug strips 'client_secret' - fix coming soon)")
+
+            # Authentication Method 1: Bearer token
             if access_token:
-                print("✅ Using bearer token authentication")
+                print("✅ AUTH: Using bearer token")
                 self.session.headers.update({"Authorization": f"Bearer {access_token}"})
                 self._auth_resolved = True
                 return
 
-            # Method 2: OIDC with client credentials
+            # Authentication Method 2: OIDC with client credentials
             if workspace_host and client_id and client_secret:
-                print("✅ Using OIDC client credentials flow")
-                if not workspace_host.startswith("http"):
+                print("✅ AUTH: Using OIDC client credentials flow")
+
+                # Normalize workspace_host
+                if not workspace_host.startswith("http://") and not workspace_host.startswith("https://"):
                     workspace_host = "https://" + workspace_host
 
                 token_url = f"{workspace_host}/oidc/v1/token"
-                resp = requests.post(
-                    token_url,
-                    data={"grant_type": "client_credentials", "scope": "all-apis"},
-                    auth=(client_id, client_secret),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-                token = resp.json().get("access_token")
-                if not token:
-                    raise RuntimeError("OIDC endpoint did not return access_token")
 
-                self.session.headers.update({"Authorization": f"Bearer {token}"})
-                self._auth_resolved = True
-                print("✅ OIDC token acquired successfully")
-                return
+                try:
+                    resp = requests.post(
+                        token_url,
+                        data={"grant_type": "client_credentials", "scope": "all-apis"},
+                        auth=(client_id, client_secret),
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    token = resp.json().get("access_token")
+                    if not token:
+                        raise RuntimeError("OIDC endpoint did not return access_token")
 
-            # Method 3: Basic auth
+                    self.session.headers.update({"Authorization": f"Bearer {token}"})
+                    self._auth_resolved = True
+                    print("✅ OIDC token acquired successfully")
+                    return
+
+                except Exception as e:
+                    raise RuntimeError(f"OIDC authentication failed: {e}")
+
+            # Authentication Method 3: Basic auth (username/password)
             if username and password:
-                print("✅ Using basic authentication")
+                print("✅ AUTH: Using basic authentication")
                 self.session.auth = (username, password)
                 self._auth_resolved = True
                 return
 
+            # No valid authentication found - provide helpful error
+            print("\n" + "="*80)
+            print("❌ AUTHENTICATION FAILED")
+            print("="*80)
+            print(f"UC Connection '{connection_name}' does not contain valid credentials.")
+            print(f"\nProperties found: {list(conn_dict.keys())}")
+            print("\nRequired (one of):")
+            print("  1. access_token")
+            print("  2. client_id + client_secret + workspace_host (for OIDC)")
+            print("  3. username + password (for basic auth)")
+
+            # Special message if client_id/workspace_host exist but client_secret missing
+            if client_id and workspace_host and not client_secret:
+                print("\n⚠️  DETECTED ISSUE:")
+                print("  - client_id: PRESENT ✓")
+                print("  - workspace_host: PRESENT ✓")
+                print("  - client_secret: MISSING ✗")
+                print("\nThis is likely the known UC bug (Dec 2024).")
+                print("  WORKAROUND: Use property name 'client_value_tmp' instead of 'client_secret'")
+                print("  Example:")
+                print('    w.connections.create(..., options={')
+                print('        "client_id": "{{secrets/scope/id}}",')
+                print('        "client_value_tmp": "{{secrets/scope/secret}}"  # Workaround name')
+                print('    })')
+
+            print("="*80 + "\n")
+
             raise RuntimeError(
-                "No valid authentication credentials found in UC Connection. "
-                f"Connection contained keys: {list(conn_dict.keys())}. "
-                "Expected: access_token, OR (client_id + client_secret + workspace_host), OR (username + password)"
+                f"No valid authentication credentials in UC Connection '{connection_name}'. "
+                "See debug output above for details."
             )
+
         def _start_dt_from_offset(self, start_offset: dict) -> Optional[datetime]:
             if start_offset and isinstance(start_offset, dict):
                 off = start_offset.get("offset")
