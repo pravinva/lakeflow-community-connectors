@@ -927,6 +927,13 @@ class LakeflowConnect:
             print(f"ℹ️  Using workaround property name: {workaround_key}")
             print("   (UC bug strips client_secret - fix coming soon)")
 
+        # Opt-in: allow unauthenticated access (useful for debugging or public PI Web API endpoints).
+        # NOTE: Default remains secure-by-default (no anonymous access unless explicitly enabled).
+        if _as_bool(self.options.get("allow_anonymous"), default=False):
+            print("⚠️  AUTH: allow_anonymous=true (no Authorization header will be sent)")
+            self._auth_resolved = True
+            return
+
         # Method 1: Bearer token
         if access_token:
             self.session.headers.update({"Authorization": f"Bearer {access_token}"})
