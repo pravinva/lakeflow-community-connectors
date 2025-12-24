@@ -931,6 +931,11 @@ class LakeflowConnect:
         # NOTE: Default remains secure-by-default (no anonymous access unless explicitly enabled).
         if _as_bool(self.options.get("allow_anonymous"), default=False):
             print("⚠️  AUTH: allow_anonymous=true (no Authorization header will be sent)")
+            # Ensure no previous auth state leaks into requests.
+            self.session.headers.pop("Authorization", None)
+            self.session.auth = None
+            self._oidc_access_token = None
+            self._oidc_token_expires_at = None
             self._auth_resolved = True
             return
 
