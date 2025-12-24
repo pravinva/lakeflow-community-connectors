@@ -1170,9 +1170,11 @@ def register_lakeflow_source(spark):
                 self._ensure_auth()
                 r = self.session.get(url, params=params, timeout=60, verify=self.verify_ssl)
                 # Some proxies/apps behave differently with a trailing slash.
-                # Retry once on 404 using `.../` to improve compatibility.
+                # Try `.../` on 404, but only use it if it succeeds (avoid breaking servers that 404 on trailing "/").
                 if r.status_code == 404 and not url.endswith("/"):
-                    r = self.session.get(url + "/", params=params, timeout=60, verify=self.verify_ssl)
+                    r_slash = self.session.get(url + "/", params=params, timeout=60, verify=self.verify_ssl)
+                    if r_slash.status_code < 400:
+                        r = r_slash
                 if r.status_code == 401 and attempt == 0:
                     self._auth_resolved = False
                     self._oidc_access_token = None
