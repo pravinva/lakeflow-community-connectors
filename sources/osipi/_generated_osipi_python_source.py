@@ -3015,7 +3015,14 @@ def register_lakeflow_source(spark):
     class LakeflowSource(DataSource):
         def __init__(self, options):
             self.options = options
-            self.lakeflow_connect = LakeflowConnect(spark, options)  # ✅ Pass spark
+            # IMPORTANT: do not capture the outer `spark` session in this class.
+            # Lakeflow/SDP can serialize the DataSource; capturing SparkContext triggers:
+            #   [CONTEXT_ONLY_VALID_ON_DRIVER]
+            from pyspark.sql import SparkSession
+
+            active = SparkSession.getActiveSession()
+            spark_session = active if active is not None else SparkSession.builder.getOrCreate()
+            self.lakeflow_connect = LakeflowConnect(spark_session, options)
 
         @classmethod
         def name(cls):
