@@ -1162,6 +1162,10 @@ def register_lakeflow_source(spark):
             for attempt in range(2):
                 self._ensure_auth()
                 r = self.session.get(url, params=params, timeout=60, verify=self.verify_ssl)
+                # Some proxies/apps behave differently with a trailing slash.
+                # Retry once on 404 using `.../` to improve compatibility.
+                if r.status_code == 404 and not url.endswith("/"):
+                    r = self.session.get(url + "/", params=params, timeout=60, verify=self.verify_ssl)
                 if r.status_code == 401 and attempt == 0:
                     self._auth_resolved = False
                     self._oidc_access_token = None
@@ -1169,7 +1173,11 @@ def register_lakeflow_source(spark):
                     self.session.headers.pop("Authorization", None)
                     self.session.auth = None
                     continue
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.HTTPError as e:
+                    body = (getattr(r, "text", None) or "")[:2000]
+                    raise requests.HTTPError(f"{e}. Response body (truncated): {body}", response=r) from e
                 return r.json()
             raise RuntimeError("Authentication failed after retry")
 
@@ -1186,7 +1194,11 @@ def register_lakeflow_source(spark):
                     self.session.headers.pop("Authorization", None)
                     self.session.auth = None
                     continue
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.HTTPError as e:
+                    body = (getattr(r, "text", None) or "")[:2000]
+                    raise requests.HTTPError(f"{e}. Response body (truncated): {body}", response=r) from e
                 return r.json()
             raise RuntimeError("Authentication failed after retry")
 
