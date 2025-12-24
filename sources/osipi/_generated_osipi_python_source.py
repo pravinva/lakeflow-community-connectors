@@ -391,7 +391,14 @@ def register_lakeflow_source(spark):
 
             self.session = requests.Session()
             self.session.headers.update({"Accept": "application/json"})
-            self.verify_ssl = _as_bool(options.get("verify_ssl"), default=True)
+            # NOTE: Some environments block passing `verify_ssl` externally via UC Connections.
+            # Support an alternate option name `requests_verify` to control TLS verification.
+            self.verify_ssl = _as_bool(
+                options.get("requests_verify")
+                if options.get("requests_verify") is not None
+                else options.get("verify_ssl"),
+                default=True,
+            )
             self._auth_resolved = False
 
             self._oidc_access_token: Optional[str] = None
