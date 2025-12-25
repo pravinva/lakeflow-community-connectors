@@ -147,7 +147,7 @@ def ingest(spark, pipeline_spec: dict) -> None:
     for t in table_list:
         cfg = spec.get_table_configuration(t)
         # Forward base URL + auth + debug knobs so `_lakeflow_metadata` can be read successfully.
-        for k in ("pi_base_url", "pi_web_api_url", "access_token", "requests_verify", "debug_http"):
+        for k in ("pi_base_url", "pi_web_api_url", "access_token", "bearer_value_tmp", "requests_verify", "debug_http"):
             v = cfg.get(k) if isinstance(cfg, dict) else None
             if v and k not in base_options:
                 base_options[k] = str(v)
