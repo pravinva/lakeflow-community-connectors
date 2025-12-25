@@ -890,7 +890,7 @@ class LakeflowConnect:
             print(f"🔍 Using UC Connection: {connection_name}")
 
         # Extract auth parameters from options
-        access_token = self.options.get("access_token")
+        access_token = self.options.get("access_token") or self.options.get("bearer_value_tmp")
         workspace_host = self.options.get("workspace_host")
         client_id = self.options.get("client_id")
         client_secret = (
@@ -1003,6 +1003,7 @@ class LakeflowConnect:
                 "client_secret": present("client_secret"),
                 "client_value_tmp": present("client_value_tmp"),
                 "access_token": present("access_token"),
+                "bearer_value_tmp": present("bearer_value_tmp"),
                 "username": present("username"),
                 "password": present("password"),
             }
