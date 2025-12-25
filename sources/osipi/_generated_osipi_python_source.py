@@ -364,9 +364,10 @@ def register_lakeflow_source(spark):
             """
             self.options = options
 
+            # NOTE: Do not hard-fail in __init__ if pi_base_url is missing.
+            # In some pipeline contexts, UC Connection options may not be injected during
+            # the initial DataSource instantiation. We validate in _ensure_auth instead.
             self.base_url = (options.get("pi_base_url") or options.get("pi_web_api_url") or "").rstrip("/")
-            if not self.base_url:
-                raise ValueError("Missing required option: pi_base_url (or pi_web_api_url)")
 
             self.session = requests.Session()
             self.session.headers.update({"Accept": "application/json"})
