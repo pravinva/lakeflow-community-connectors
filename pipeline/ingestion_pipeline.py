@@ -142,11 +142,12 @@ def ingest(spark, pipeline_spec: dict) -> None:
 
     # Base options needed for the metadata read.
     # Some environments do not inject arbitrary UC connection options into the worker options,
-    # so we forward pi_base_url/pi_web_api_url from the table_configuration (if provided).
+    # so we forward required runtime options from the table_configuration (if provided).
     base_options: dict[str, str] = {}
     for t in table_list:
         cfg = spec.get_table_configuration(t)
-        for k in ("pi_base_url", "pi_web_api_url"):
+        # Forward base URL + auth + debug knobs so `_lakeflow_metadata` can be read successfully.
+        for k in ("pi_base_url", "pi_web_api_url", "access_token", "requests_verify", "debug_http"):
             v = cfg.get(k) if isinstance(cfg, dict) else None
             if v and k not in base_options:
                 base_options[k] = str(v)
