@@ -146,28 +146,32 @@ def _table_category_from_tables_lists(inst: Any, table_name: str) -> Optional[st
 def _table_category_fallback_by_name(table_name: str) -> str:
     """Fallback categorization when TABLES_* lists don't exist.
 
-    This is intentionally conservative: it tries to be useful for connectors with
-    common prefixes, but won't overfit.
+    This is intentionally generic: group by the first token before '_' (or 'unknown').
+    Connector-specific categorization should be provided via connector TABLES_* lists
+    or via an external rules/map file in tools examples.
     """
 
     t = (table_name or "").strip().lower()
-
-    # OSIPI-style patterns
-    if t.startswith("pi_streamset_") or t in ("pi_timeseries", "pi_interpolated", "pi_plot", "pi_summary", "pi_current_value"):
-        return "time_series"
-    if t.startswith("pi_event"):
-        return "event_frames"
-    if t.startswith("pi_af_") or t.startswith("pi_element_") or t.startswith("pi_asset") or t.startswith("pi_attribute_"):
-        return "asset_framework"
-
-    # Generic fallback: group by first token
+    if not t:
+        return "unknown"
     if "_" in t:
         return t.split("_", 1)[0]
     return "unknown"
 
 
-def _table_category(inst: Any, table_name: str) -> str:
-    return _table_category_from_tables_lists(inst, table_name) or _table_category_fallback_by_name(table_name)
+
+
+def _table_category(inst: Any, table_name: str, *, prefix_map: Dict[str, str] | None = None) -> str:
+    c = _table_category_from_tables_lists(inst, table_name)
+    if c:
+        return c
+    pm = prefix_map or {}
+    t = (table_name or "").strip().lower()
+    for k, v in pm.items():
+        kk = (k or "").strip().lower()
+        if kk and t.startswith(kk):
+            return v
+    return _table_category_fallback_by_name(table_name)
 
 
 
@@ -187,6 +191,16 @@ def main() -> int:
         default="ingestion_type",
         choices=["ingestion_type", "category", "category_and_ingestion_type", "none"],
         help="How to derive pipeline_group (default: ingestion_type).",
+    )
+
+    p.add_argument(
+        "--category-prefix-map-json",
+        default=None,
+        help=(
+            "Optional JSON object mapping table-name prefixes to category names. "
+            "Example: {'pi_streamset':'time_series','pi_af':'asset_framework','pi_event':'event_frames'}. "
+            "Only used when --group-by uses category and TABLES_* lists are unavailable."
+        ),
     )
 
     p.add_argument("--schedule-snapshot", default="", help="Schedule (cron) for snapshot tables. Empty = no jobs.")
@@ -212,6 +226,15 @@ def main() -> int:
         init_options = json.loads(args.init_options_json)
         if not isinstance(init_options, dict):
             raise ValueError("--init-options-json must be a JSON object")
+    category_prefix_map: Dict[str, str] = {}
+    if args.category_prefix_map_json:
+        category_prefix_map = json.loads(args.category_prefix_map_json)
+        if (
+            not isinstance(category_prefix_map, dict)
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in category_prefix_map.items())
+        ):
+            raise ValueError("--category-prefix-map-json must be a JSON object of string->string")
+
 
     cls = _load_connector_class(connector_name=args.connector_name, connector_python_file=args.connector_python_file)
     inst = cls(init_options)
@@ -261,7 +284,7 @@ def main() -> int:
             cursor_field = meta.get("cursor_field")
             primary_keys = meta.get("primary_keys")
 
-            category = _table_category(inst, table)
+            category = _table_category(inst, table, prefix_map=category_prefix_map)
 
             if args.group_by == "ingestion_type":
                 pipeline_group = ingestion_type
