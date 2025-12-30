@@ -113,3 +113,55 @@ def test_ingestion_dab_generator_prefix_priority(tmp_path: Path):
 
     for pdef in data["resources"]["pipelines"].values():
         SpecParser(pdef["ingestion_definition"])
+
+
+def test_ingestion_dab_generator_chunks_existing_groups(tmp_path: Path):
+    """If pipeline_group is provided, --max-items-per-pipeline should split it into sub-groups."""
+    yaml = pytest.importorskip("yaml")
+
+    repo = Path(__file__).resolve().parents[1]
+    gen = repo / "tools/ingestion_dab_generator/generate_ingestion_dab_yaml.py"
+
+    csv_path = tmp_path / "in_chunk.csv"
+    out_path = tmp_path / "out_chunk.yml"
+
+    csv_path.write_text(
+        textwrap.dedent(
+            """\
+            connection_name,source_table,destination_catalog,destination_schema,destination_table,pipeline_group,table_options_json,weight
+            my_conn,pi_timeseries,main,bronze,ts_a,core,"{}",1
+            my_conn,pi_timeseries,main,bronze,ts_b,core,"{}",1
+            my_conn,pi_timeseries,main,bronze,ts_c,core,"{}",1
+            my_conn,pi_timeseries,main,bronze,ts_d,core,"{}",1
+            my_conn,pi_timeseries,main,bronze,ts_e,core,"{}",1
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.check_call(
+        [
+            "python3",
+            str(gen),
+            "--input-csv",
+            str(csv_path),
+            "--output-yaml",
+            str(out_path),
+            "--connector-name",
+            "osipi",
+            "--connection-name",
+            "my_conn",
+            "--dest-catalog",
+            "main",
+            "--dest-schema",
+            "bronze",
+            "--max-items-per-pipeline",
+            "2",
+        ]
+    )
+
+    data = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert "resources" in data and "pipelines" in data["resources"]
+
+    # Expect chunking: core_1 (2), core_2 (2), core_3 (1) => 3 pipelines
+    assert len(data["resources"]["pipelines"]) == 3
