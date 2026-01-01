@@ -47,6 +47,17 @@ Production DLT Pipelines with OAuth/Auth
 
 ## Quick Start
 
+## Run entirely from within a Databricks workspace (no local CLI)
+
+If your repo is synced into Databricks Repos and you do **not** want to run any commands on your laptop, open and run:
+
+- `tools/notebook_based_deployment/workspace_notebooks/deploy_notebook_based_dlt_pipelines.py`
+
+It will:
+- Upload the connector generated source into your workspace user folder
+- Generate + upload one DLT notebook per `pipeline_group`
+- Create/update DLT pipelines (and optional scheduled jobs) via the Databricks SDK
+
 1) Prepare a metadata CSV with at least `source_table` and `pipeline_group`.
 
 2) Generate notebooks:
