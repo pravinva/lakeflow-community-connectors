@@ -8,28 +8,19 @@ Each connector consists of two parts:
 
 ## Connectors
 
-This repo is currently focused on the `osipi` connector under `sources/osipi/`.
+Check the `sources/` directory for available source connectors, which contain the source-specific implementation of an interface defined in `sources/interface/lakeflow_connect.py`.
 
-The connector interface is defined in `sources/interface/lakeflow_connect.py`.
+The `libs/` and `pipeline/` directories include the shared source code across all source connectors.
 
-The `libs/` and `pipeline/` directories include the shared source code across the connector.
+## Create New Connectors
 
-## Deploy (Databricks workspace only; no local CLI)
-
-If this repo is synced into a Databricks Repo, open and run:
-
-- `tools/notebook_based_deployment/workspace_notebooks/deploy_notebook_based_dlt_pipelines.py`
-
-That notebook:
-- uploads the generated connector source into your workspace user folder
-- generates and uploads one DLT notebook per `pipeline_group` from the CSV
-- creates/updates DLT pipelines (and optional scheduled Jobs) via the Databricks SDK
+Users can follow the instructions in `prompts/vibe_coding_instruction.md` to create new connectors.
 
 ## Tests
 
 This directory includes generic shared test suites to validate any connector source implementation.
 
 
-## Notes
-
-- This repo intentionally omits other example connectors to stay minimal and OSIPI-focused.
+## TODO:
+1. Add dev guidelines
+2. Add general instruction on how to use community connector (e.g. update spec and create a SDP for ingestion)
