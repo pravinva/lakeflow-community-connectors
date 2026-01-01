@@ -209,6 +209,18 @@ def _convert_cron_to_quartz(expr: str) -> str:
     return f"0 {minute} {hour} {dom} {mon} {dow}"
 
 
+def _as_payload(obj: Any) -> dict:
+    """Normalize SDK request objects to plain dict payloads."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    as_dict = getattr(obj, "as_dict", None)
+    if callable(as_dict):
+        return as_dict()
+    raise TypeError(f"Unsupported payload type: {type(obj)}")
+
+
 @dataclass
 class TableRow:
     source_table: str
@@ -452,11 +464,11 @@ else:
         if job_name in existing_jobs:
             jid = existing_jobs[job_name].job_id
             print("Resetting existing job:", job_name, jid)
-            w.jobs.reset(job_id=jid, new_settings=job_settings)
+            w.jobs.reset(job_id=jid, new_settings=_as_payload(job_settings))
             created_jobs[group] = jid
         else:
             print("Creating job:", job_name)
-            out = w.jobs.create(**job_settings.as_dict())  # type: ignore[arg-type]
+            out = w.jobs.create(**_as_payload(job_settings))  # type: ignore[arg-type]
             created_jobs[group] = out.job_id
 
     print("Jobs:")
