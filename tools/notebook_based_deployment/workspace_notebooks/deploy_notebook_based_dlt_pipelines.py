@@ -20,6 +20,12 @@
 # Fill widgets and Run All. Defaults are OSIPI-focused, but this notebook is generic.
 
 import json as _json
+import os as _os
+import sys as _sys
+
+# Prevent Python from writing __pycache__ into the synced Repo checkout (keeps Repos git status clean).
+_os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+_sys.dont_write_bytecode = True
 
 try:
     dbutils.widgets.text("CONNECTOR_NAME", "osipi", "Connector name")
