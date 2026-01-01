@@ -16,35 +16,105 @@
 
 # COMMAND ----------
 
-# DBTITLE 1,Configuration (edit these)
-CONNECTOR_NAME = "osipi"
+# DBTITLE 1,Configuration (widgets)
+# Fill widgets and Run All. Defaults are OSIPI-focused, but this notebook is generic.
 
-# CSV inside this repo (relative to repo root)
-CSV_REL_PATH = "tools/notebook_based_deployment/examples/osipi/osipi_by_category_and_ingestion_type.csv"
+import json as _json
 
-# Destination tables location
-DEST_CATALOG = "osipi"
-DEST_SCHEMA = "bronzeosipi"
+try:
+    dbutils.widgets.text("CONNECTOR_NAME", "osipi", "Connector name")
+    dbutils.widgets.text(
+        "CSV_REL_PATH",
+        "tools/notebook_based_deployment/examples/osipi/osipi_by_category_and_ingestion_type.csv",
+        "CSV relative path (in repo)",
+    )
+    dbutils.widgets.text("DEST_CATALOG", "osipi", "Destination catalog")
+    dbutils.widgets.text("DEST_SCHEMA", "bronzeosipi", "Destination schema")
 
-# Where to put uploaded artifacts in your workspace (defaults to your user home)
-WORKSPACE_CONNECTORS_DIR = None  # e.g. "/Workspace/Users/you@databricks.com/connectors"
-WORKSPACE_NOTEBOOKS_DIR = None  # e.g. "/Workspace/Users/you@databricks.com/osipi_dlt_pipelines"
+    dbutils.widgets.text("WORKSPACE_CONNECTORS_DIR", "", "Workspace connectors dir (optional)")
+    dbutils.widgets.text("WORKSPACE_NOTEBOOKS_DIR", "", "Workspace notebooks dir (optional)")
 
-# Connector source file inside this repo (relative to repo root)
-CONNECTOR_GENERATED_SOURCE_REL_PATH = f"sources/{CONNECTOR_NAME}/_generated_{CONNECTOR_NAME}_python_source.py"
+    dbutils.widgets.text(
+        "CONNECTOR_GENERATED_SOURCE_REL_PATH",
+        "sources/osipi/_generated_osipi_python_source.py",
+        "Generated source rel path (in repo)",
+    )
 
-# Pipeline creation behavior
-DEVELOPMENT = False
-CONTINUOUS = False
+    dbutils.widgets.dropdown("DEVELOPMENT", "false", ["true", "false"], "Pipeline development")
+    dbutils.widgets.dropdown("CONTINUOUS", "false", ["true", "false"], "Pipeline continuous")
+    dbutils.widgets.dropdown("CREATE_SCHEDULED_JOBS", "true", ["true", "false"], "Create jobs from CSV schedules")
+    dbutils.widgets.dropdown("RECREATE_EXISTING", "false", ["true", "false"], "Delete/recreate existing resources")
+    dbutils.widgets.text("DLT_NUM_WORKERS", "1", "DLT num_workers (classic DLT)")
 
-# If True: create/update scheduled jobs when CSV has a `schedule` value.
-CREATE_SCHEDULED_JOBS = True
+    dbutils.widgets.text(
+        "CONNECTOR_CONFIG_JSON",
+        _json.dumps(
+            {
+                "secrets_scope": "sp-osipi",
+                "secret_mappings": {"bearer_value_tmp": ["mock-bearer-token"]},
+                "static_options": {
+                    "pi_base_url": "https://mock-piwebapi-912141448724.us-central1.run.app",
+                    "verify_ssl": "true",
+                },
+                "dynamic_options": {},
+            }
+        ),
+        "Connector config JSON (secrets + static/dynamic options)",
+    )
+except Exception:
+    # Widgets not available (e.g. local execution)
+    pass
 
-# If True: delete & recreate pipelines/jobs when name matches (most reliable).
-RECREATE_EXISTING = False
 
-# Cluster settings for DLT classic clusters (DLT serverless may not be available in all workspaces via API)
-DLT_NUM_WORKERS = 1
+def _w(name: str, default: str) -> str:
+    try:
+        v = dbutils.widgets.get(name)
+        return v if v is not None else default
+    except Exception:
+        return default
+
+
+def _w_bool(name: str, default: bool) -> bool:
+    raw = _w(name, "true" if default else "false").strip().lower()
+    return raw in ("1", "true", "yes", "y", "on")
+
+
+def _w_int(name: str, default: int) -> int:
+    raw = _w(name, str(default)).strip()
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+CONNECTOR_NAME = _w("CONNECTOR_NAME", "osipi").strip()
+CSV_REL_PATH = _w(
+    "CSV_REL_PATH",
+    "tools/notebook_based_deployment/examples/osipi/osipi_by_category_and_ingestion_type.csv",
+).strip()
+DEST_CATALOG = _w("DEST_CATALOG", "osipi").strip()
+DEST_SCHEMA = _w("DEST_SCHEMA", "bronzeosipi").strip()
+
+WORKSPACE_CONNECTORS_DIR = _w("WORKSPACE_CONNECTORS_DIR", "").strip() or None
+WORKSPACE_NOTEBOOKS_DIR = _w("WORKSPACE_NOTEBOOKS_DIR", "").strip() or None
+
+CONNECTOR_GENERATED_SOURCE_REL_PATH = _w(
+    "CONNECTOR_GENERATED_SOURCE_REL_PATH",
+    f"sources/{CONNECTOR_NAME}/_generated_{CONNECTOR_NAME}_python_source.py",
+).strip()
+
+DEVELOPMENT = _w_bool("DEVELOPMENT", False)
+CONTINUOUS = _w_bool("CONTINUOUS", False)
+CREATE_SCHEDULED_JOBS = _w_bool("CREATE_SCHEDULED_JOBS", True)
+RECREATE_EXISTING = _w_bool("RECREATE_EXISTING", False)
+DLT_NUM_WORKERS = _w_int("DLT_NUM_WORKERS", 1)
+
+_connector_config_raw = _w("CONNECTOR_CONFIG_JSON", "").strip()
+if not _connector_config_raw:
+    raise ValueError("CONNECTOR_CONFIG_JSON widget is empty; provide connector auth/options config.")
+connector_config = _json.loads(_connector_config_raw)
+if not isinstance(connector_config, dict):
+    raise ValueError("CONNECTOR_CONFIG_JSON must be a JSON object.")
 
 # COMMAND ----------
 
@@ -221,16 +291,7 @@ if spec is None or spec.loader is None:
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)  # type: ignore[attr-defined]
 
-# OSIPI mock bearer-token config. Edit if you want OAuth instead.
-connector_config: Dict[str, Any] = {
-    "secrets_scope": "sp-osipi",
-    "secret_mappings": {"bearer_value_tmp": ["mock-bearer-token"]},
-    "static_options": {
-        "pi_base_url": "https://mock-piwebapi-912141448724.us-central1.run.app",
-        "verify_ssl": "true",
-    },
-    "dynamic_options": {},
-}
+# connector_config comes from the CONNECTOR_CONFIG_JSON widget (parsed at the top).
 
 rows = _read_csv_rows(csv_path)
 groups = _group_rows(rows)
