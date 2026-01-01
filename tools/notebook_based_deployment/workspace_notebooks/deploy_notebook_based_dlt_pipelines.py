@@ -40,7 +40,9 @@ try:
     dbutils.widgets.text("WORKSPACE_CONNECTORS_DIR", "", "Workspace connectors dir (optional)")
     dbutils.widgets.text("WORKSPACE_NOTEBOOKS_DIR", "", "Workspace notebooks dir (optional)")
 
-    dbutils.widgets.text("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors", "Connector source local FS dir (/dbfs/...)")
+    dbutils.widgets.dropdown("USE_UC_VOLUME", "true", ["true", "false"], "Store connector source in UC Volume")
+    dbutils.widgets.text("UC_VOLUME_NAME", "lakeflow_connectors", "UC Volume name")
+    dbutils.widgets.text("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors", "(Fallback) connector source dir (/dbfs/...) ")
 
     dbutils.widgets.text(
         "CONNECTOR_GENERATED_SOURCE_REL_PATH",
@@ -118,6 +120,8 @@ CONTINUOUS = _w_bool("CONTINUOUS", False)
 CREATE_SCHEDULED_JOBS = _w_bool("CREATE_SCHEDULED_JOBS", True)
 RECREATE_EXISTING = _w_bool("RECREATE_EXISTING", False)
 PURGE_WORKSPACE_DIRS = _w_bool("PURGE_WORKSPACE_DIRS", False)
+USE_UC_VOLUME = _w_bool("USE_UC_VOLUME", True)
+UC_VOLUME_NAME = _w("UC_VOLUME_NAME", "lakeflow_connectors").strip()
 DLT_NUM_WORKERS = _w_int("DLT_NUM_WORKERS", 1)
 
 _connector_config_raw = _w("CONNECTOR_CONFIG_JSON", "").strip()
@@ -328,23 +332,66 @@ if not connector_src_path.exists():
 
 # DBTITLE 1,Upload connector generated source into workspace
 # DBTITLE 1,Write connector generated source to DBFS (/dbfs/...)
-# The DLT pipeline cluster can reliably read /dbfs paths via open().
+# DBTITLE 1,Write connector generated source to UC Volume (preferred) or DBFS fallback
+# DLT pipeline clusters can reliably read /Volumes/... (UC Volumes). DBFS is used only as a fallback.
+
+w = WorkspaceClient()
+
+# Optionally purge stale workspace notebooks/connectors dirs (workspace objects)
+if PURGE_WORKSPACE_DIRS:
+    try:
+        print("Purging workspace connectors dir:", WORKSPACE_CONNECTORS_DIR)
+        w.workspace.delete(path=WORKSPACE_CONNECTORS_DIR, recursive=True)
+    except Exception as e:
+        print("(ignore) purge connectors dir failed:", e)
+    try:
+        print("Purging workspace notebooks dir:", WORKSPACE_NOTEBOOKS_DIR)
+        w.workspace.delete(path=WORKSPACE_NOTEBOOKS_DIR, recursive=True)
+    except Exception as e:
+        print("(ignore) purge notebooks dir failed:", e)
+
+# Compute a filesystem directory where DLT can open() the connector source.
+# Preferred: UC Volume path /Volumes/<catalog>/<schema>/<volume>
+# Fallback:  /dbfs/FileStore/... (if volume create/write isn't permitted)
+
+connector_fs_dir = None
+connector_write_uri_dir = None
+
+if USE_UC_VOLUME:
+    vol = UC_VOLUME_NAME
+    if not vol:
+        raise ValueError("UC_VOLUME_NAME is empty")
+    try:
+        # Create volume if needed (requires UC privileges)
+        spark.sql(f"CREATE VOLUME IF NOT EXISTS {DEST_CATALOG}.{DEST_SCHEMA}.{vol}")
+        connector_fs_dir = f"/Volumes/{DEST_CATALOG}/{DEST_SCHEMA}/{vol}"
+        connector_write_uri_dir = "dbfs:" + connector_fs_dir
+        print("Using UC Volume for connector source:", connector_fs_dir)
+    except Exception as e:
+        print("(fallback) Unable to create/use UC Volume; falling back to DBFS.")
+        print("  Reason:", e)
+
+if connector_fs_dir is None:
+    _dbfs_dir = CONNECTOR_LOCAL_FS_DIR.rstrip('/')
+    if not _dbfs_dir.startswith('/dbfs/'):
+        raise ValueError(f"CONNECTOR_LOCAL_FS_DIR must start with /dbfs/. Got: {_dbfs_dir!r}")
+    connector_fs_dir = _dbfs_dir
+    connector_write_uri_dir = 'dbfs:' + connector_fs_dir[len('/dbfs'):]
+    print("Using DBFS fallback for connector source:", connector_fs_dir)
 
 # Ensure destination directory exists
-_dbfs_dir = CONNECTOR_LOCAL_FS_DIR.rstrip('/')
-if not _dbfs_dir.startswith('/dbfs/'):
-    raise ValueError(f"CONNECTOR_LOCAL_FS_DIR must start with /dbfs/. Got: {_dbfs_dir!r}")
+if connector_write_uri_dir is None:
+    raise ValueError('Internal error: connector_write_uri_dir is None')
 
-# dbutils.fs uses dbfs:/ URIs
-_dbfs_uri_dir = 'dbfs:' + _dbfs_dir[len('/dbfs'):]
+dbutils.fs.mkdirs(connector_write_uri_dir)
 
-dbutils.fs.mkdirs(_dbfs_uri_dir)
-
-connector_fs_path = f"{_dbfs_dir}/{CONNECTOR_NAME}_generated_source.py"
-# Write text (SOURCE) so exec(open(...).read()) works
+connector_fs_path = f"{connector_fs_dir.rstrip('/')}/{CONNECTOR_NAME}_generated_source.py"
 content = connector_src_path.read_text(encoding='utf-8')
 
-dbutils.fs.put('dbfs:' + connector_fs_path[len('/dbfs'):], content, overwrite=True)
+# dbutils.fs.put expects dbfs:/ URIs
+write_uri = 'dbfs:' + connector_fs_path if connector_fs_path.startswith('/Volumes/') else 'dbfs:' + connector_fs_path[len('/dbfs'):]
+
+dbutils.fs.put(write_uri, content, overwrite=True)
 print('Wrote connector source to:', connector_fs_path)
 # COMMAND ----------
 
@@ -374,7 +421,7 @@ for group, table_dicts in sorted(groups.items()):
         connector_config,
         table_dicts,
         out_file,
-        CONNECTOR_LOCAL_FS_DIR,
+        connector_fs_dir,
         pipeline_group=group,
     )
 
