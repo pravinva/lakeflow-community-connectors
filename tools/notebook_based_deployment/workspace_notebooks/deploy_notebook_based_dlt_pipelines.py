@@ -40,6 +40,8 @@ try:
     dbutils.widgets.text("WORKSPACE_CONNECTORS_DIR", "", "Workspace connectors dir (optional)")
     dbutils.widgets.text("WORKSPACE_NOTEBOOKS_DIR", "", "Workspace notebooks dir (optional)")
 
+    dbutils.widgets.text("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors", "Connector source local FS dir (/dbfs/...)")
+
     dbutils.widgets.text(
         "CONNECTOR_GENERATED_SOURCE_REL_PATH",
         "sources/osipi/_generated_osipi_python_source.py",
@@ -104,6 +106,7 @@ DEST_SCHEMA = _w("DEST_SCHEMA", "bronzeosipi").strip()
 
 WORKSPACE_CONNECTORS_DIR = _w("WORKSPACE_CONNECTORS_DIR", "").strip() or None
 WORKSPACE_NOTEBOOKS_DIR = _w("WORKSPACE_NOTEBOOKS_DIR", "").strip() or None
+CONNECTOR_LOCAL_FS_DIR = _w("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors").strip()
 
 CONNECTOR_GENERATED_SOURCE_REL_PATH = _w(
     "CONNECTOR_GENERATED_SOURCE_REL_PATH",
@@ -324,26 +327,25 @@ if not connector_src_path.exists():
 # COMMAND ----------
 
 # DBTITLE 1,Upload connector generated source into workspace
-w = WorkspaceClient()
+# DBTITLE 1,Write connector generated source to DBFS (/dbfs/...)
+# The DLT pipeline cluster can reliably read /dbfs paths via open().
 
-if PURGE_WORKSPACE_DIRS:
-    try:
-        print("Purging workspace connectors dir:", WORKSPACE_CONNECTORS_DIR)
-        w.workspace.delete(path=WORKSPACE_CONNECTORS_DIR, recursive=True)
-    except Exception as e:
-        print("(ignore) purge connectors dir failed:", e)
-    try:
-        print("Purging workspace notebooks dir:", WORKSPACE_NOTEBOOKS_DIR)
-        w.workspace.delete(path=WORKSPACE_NOTEBOOKS_DIR, recursive=True)
-    except Exception as e:
-        print("(ignore) purge notebooks dir failed:", e)
+# Ensure destination directory exists
+_dbfs_dir = CONNECTOR_LOCAL_FS_DIR.rstrip('/')
+if not _dbfs_dir.startswith('/dbfs/'):
+    raise ValueError(f"CONNECTOR_LOCAL_FS_DIR must start with /dbfs/. Got: {_dbfs_dir!r}")
 
-_mkdirs(w, WORKSPACE_CONNECTORS_DIR)
+# dbutils.fs uses dbfs:/ URIs
+_dbfs_uri_dir = 'dbfs:' + _dbfs_dir[len('/dbfs'):]
 
-connector_ws_path = f"{WORKSPACE_CONNECTORS_DIR}/{CONNECTOR_NAME}_generated_source.py"
-_import_py_source(w, local_path=connector_src_path, workspace_path=connector_ws_path)
-print("Uploaded connector source to:", connector_ws_path)
+dbutils.fs.mkdirs(_dbfs_uri_dir)
 
+connector_fs_path = f"{_dbfs_dir}/{CONNECTOR_NAME}_generated_source.py"
+# Write text (SOURCE) so exec(open(...).read()) works
+content = connector_src_path.read_text(encoding='utf-8')
+
+dbutils.fs.put('dbfs:' + connector_fs_path[len('/dbfs'):], content, overwrite=True)
+print('Wrote connector source to:', connector_fs_path)
 # COMMAND ----------
 
 # DBTITLE 1,Generate DLT notebooks locally (driver) using the generator in this repo
@@ -372,7 +374,7 @@ for group, table_dicts in sorted(groups.items()):
         connector_config,
         table_dicts,
         out_file,
-        WORKSPACE_CONNECTORS_DIR,
+        CONNECTOR_LOCAL_FS_DIR,
         pipeline_group=group,
     )
 
