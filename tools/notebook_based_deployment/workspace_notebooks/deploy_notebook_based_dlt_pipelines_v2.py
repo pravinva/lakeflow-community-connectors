@@ -97,7 +97,6 @@ try:
     # Store connector source where DLT clusters can open() it
     dbutils.widgets.dropdown("USE_UC_VOLUME", "true", ["true", "false"], "Store connector source in UC Volume")
     dbutils.widgets.text("UC_VOLUME_NAME", "lakeflow_connectors", "UC Volume name")
-    dbutils.widgets.text("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors", "(Fallback) connector source dir (/dbfs/...) ")
 
     # Connector source file inside this repo (relative to repo root)
     dbutils.widgets.text("CONNECTOR_GENERATED_SOURCE_REL_PATH", _PRESETS[preset]["default_generated_source"], "Generated source rel path (in repo)")
@@ -153,7 +152,6 @@ WORKSPACE_CONNECTORS_DIR = None  # not used in v2 (connector source stored on Vo
 
 USE_UC_VOLUME = _w_bool("USE_UC_VOLUME", True)
 UC_VOLUME_NAME = _w("UC_VOLUME_NAME", "lakeflow_connectors").strip()
-CONNECTOR_LOCAL_FS_DIR = _w("CONNECTOR_LOCAL_FS_DIR", "/dbfs/FileStore/lakeflow_connectors").strip()
 
 CONNECTOR_GENERATED_SOURCE_REL_PATH = _w("CONNECTOR_GENERATED_SOURCE_REL_PATH", "").strip()
 
@@ -391,33 +389,16 @@ if PURGE_WORKSPACE_DIRS:
         print("(ignore) purge notebooks dir failed:", e)
 
 # Compute a filesystem directory where DLT can open() the connector source.
-# Preferred: UC Volume path /Volumes/<catalog>/<schema>/<volume>
-# Fallback:  /dbfs/FileStore/... (if volume create/write isn't permitted)
+# UC Volume path: /Volumes/<catalog>/<schema>/<volume>
 
-connector_fs_dir = None
-connector_write_uri_dir = None
-
-if USE_UC_VOLUME:
-    vol = UC_VOLUME_NAME
-    if not vol:
-        raise ValueError("UC_VOLUME_NAME is empty")
-    try:
-        # Create volume if needed (requires UC privileges)
-        spark.sql(f"CREATE VOLUME IF NOT EXISTS {DEST_CATALOG}.{DEST_SCHEMA}.{vol}")
-        connector_fs_dir = f"/Volumes/{DEST_CATALOG}/{DEST_SCHEMA}/{vol}"
-        connector_write_uri_dir = "dbfs:" + connector_fs_dir
-        print("Using UC Volume for connector source:", connector_fs_dir)
-    except Exception as e:
-        print("(fallback) Unable to create/use UC Volume; falling back to DBFS.")
-        print("  Reason:", e)
-
-if connector_fs_dir is None:
-    _dbfs_dir = CONNECTOR_LOCAL_FS_DIR.rstrip('/')
-    if not _dbfs_dir.startswith('/dbfs/'):
-        raise ValueError(f"CONNECTOR_LOCAL_FS_DIR must start with /dbfs/. Got: {_dbfs_dir!r}")
-    connector_fs_dir = _dbfs_dir
-    connector_write_uri_dir = 'dbfs:' + connector_fs_dir[len('/dbfs'):]
-    print("Using DBFS fallback for connector source:", connector_fs_dir)
+vol = UC_VOLUME_NAME
+if not vol:
+    raise ValueError('UC_VOLUME_NAME is empty')
+# Create volume if needed (requires UC privileges)
+spark.sql(f"CREATE VOLUME IF NOT EXISTS {DEST_CATALOG}.{DEST_SCHEMA}.{vol}")
+connector_fs_dir = f"/Volumes/{DEST_CATALOG}/{DEST_SCHEMA}/{vol}"
+connector_write_uri_dir = 'dbfs:' + connector_fs_dir
+print('Using UC Volume for connector source:', connector_fs_dir)
 
 # Ensure destination directory exists
 if connector_write_uri_dir is None:
@@ -429,7 +410,7 @@ connector_fs_path = f"{connector_fs_dir.rstrip('/')}/{CONNECTOR_NAME}_generated_
 content = connector_src_path.read_text(encoding='utf-8')
 
 # dbutils.fs.put expects dbfs:/ URIs
-write_uri = 'dbfs:' + connector_fs_path if connector_fs_path.startswith('/Volumes/') else 'dbfs:' + connector_fs_path[len('/dbfs'):]
+write_uri = 'dbfs:' + connector_fs_path
 
 dbutils.fs.put(write_uri, content, overwrite=True)
 print('Wrote connector source to:', connector_fs_path)
