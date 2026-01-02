@@ -1,0 +1,43 @@
+{
+  "connector_name": "osipi",
+  "generated_source_rel_path": "sources/osipi/_generated_osipi_python_source.py",
+  "csv": {
+    "mode": "static",
+    "path": "tools/notebook_based_deployment/examples/osipi/osipi_by_category_and_ingestion_type.csv"
+  },
+  "connector_config": {
+    "secrets_scope": "sp-osipi",
+    "secret_mappings": {
+      "bearer_value_tmp": ["mock-bearer-token"]
+    },
+    "static_options": {
+      "pi_base_url": "https://mock-piwebapi-912141448724.us-central1.run.app",
+      "verify_ssl": "true"
+    },
+    "dynamic_options": {}
+  },
+  "discover": {
+    "enabled": true,
+    "group_by": "category_and_ingestion_type",
+    "best_effort": false,
+    "schedule_snapshot": "0 0 * * *",
+    "schedule_append": "*/15 * * * *",
+    "schedule_unknown": "",
+    "category_prefix_map_rel_path": "tools/notebook_based_deployment/examples/osipi/category_prefix_map.example.json"
+  },
+  "pipeline": {
+    "development": false,
+    "continuous": false,
+    "num_workers": 1
+  },
+  "jobs": {
+    "create": true,
+    "pause": true,
+    "timezone_id": "UTC"
+  },
+  "storage": {
+    "use_uc_volume": true,
+    "uc_volume_name": "lakeflow_connectors",
+    "dbfs_fallback_dir": "/dbfs/FileStore/lakeflow_connectors"
+  }
+}
