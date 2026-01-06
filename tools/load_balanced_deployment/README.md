@@ -163,6 +163,52 @@ python3 tools/load_balanced_deployment/generate_dab_yaml.py \
 
 **See Example**: Check `examples/osipi/dabs/` for a complete reference DAB bundle
 
+### Step 3.5: Validate Table Ownership (RECOMMENDED)
+
+**⚠️ IMPORTANT**: Before deploying, validate that no table ownership conflicts exist:
+
+```bash
+python3 tools/load_balanced_deployment/validate_table_ownership.py \
+  --csv /tmp/osipi_tables.csv \
+  --catalog osipi \
+  --schema bronze \
+  --profile dogfood
+```
+
+**What this does**:
+- Checks if any tables are already owned by other pipelines
+- Prevents runtime failures due to DLT table ownership conflicts
+- Returns exit code 0 (safe) or 1 (conflicts detected)
+
+**Example output** (conflicts detected):
+```
+✗ VALIDATION FAILED
+
+⚠️  TABLE OWNERSHIP CONFLICTS DETECTED:
+
+asset_framework_snapshot:
+  - pi_af_hierarchy
+    Currently owned by: osipi_ingestion_pipeline
+  - pi_assetservers
+    Currently owned by: osipi_ingestion_pipeline
+
+RECOMMENDED SOLUTIONS:
+Option 1: Use a different target schema (RECOMMENDED)
+  --schema bronze_v2
+```
+
+**Integration with CI/CD**:
+```bash
+# In your deployment script
+if ! python3 validate_table_ownership.py --csv tables.csv --catalog osipi --schema bronze; then
+    echo "❌ Validation failed! Use --schema bronze_v2 to avoid conflicts"
+    exit 1
+fi
+
+echo "✓ Validation passed, proceeding with deployment..."
+databricks bundle deploy
+```
+
 ### Step 4: Deploy
 
 ```bash
