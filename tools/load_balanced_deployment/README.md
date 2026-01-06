@@ -367,6 +367,145 @@ These are deprecated in Unity Catalog environments and bypass governance control
 3. **UC Volumes provide governance** - use for data files, artifacts, and shared resources
 4. **DBFS is deprecated** - avoid all DBFS root and mount patterns
 
+## ⚠️ CRITICAL: Table Ownership and Load Balancing Changes
+
+### The Problem: DLT Table Ownership Conflicts
+
+**Each table in Unity Catalog can only be owned by ONE DLT pipeline at a time.** If you change load balancing (reassign tables to different pipeline groups), the new pipelines will fail with:
+
+```
+DLTAnalysisException: Table `catalog`.`schema`.`table_name` is already managed by pipeline <pipeline_id>.
+A table can only be owned by one pipeline.
+```
+
+### When This Happens
+
+1. **Initial deployment**: `pi_dataservers` → `metadata_snapshot` pipeline
+2. **Load balancing change**: Move `pi_dataservers` → `discovery_inventory` pipeline
+3. **Result**: `discovery_inventory` pipeline fails because `metadata_snapshot` still owns the table
+
+### Solutions
+
+#### Option 1: Use Different Target Schemas (Recommended for Testing)
+
+When changing load balancing, deploy to a new schema:
+
+```bash
+# Original deployment
+--catalog osipi --schema bronze
+
+# After load balancing change
+--catalog osipi --schema bronze_v2  # Or bronze_load_balanced, bronze_new, etc.
+```
+
+**Pros**:
+- Safe, no conflicts
+- Can compare old vs new side-by-side
+- Easy rollback
+
+**Cons**:
+- Data duplication
+- Need to update downstream consumers
+
+#### Option 2: Delete Old Pipelines Before Redeployment
+
+If you want to keep the same schema, delete the old pipelines first:
+
+```python
+from databricks.sdk import WorkspaceClient
+
+w = WorkspaceClient()
+
+# Delete old pipelines (this also releases table ownership)
+old_pipeline_ids = ["<pipeline_id_1>", "<pipeline_id_2>", ...]
+for pid in old_pipeline_ids:
+    w.pipelines.delete(pipeline_id=pid)
+    print(f"Deleted pipeline {pid}")
+
+# Wait a few seconds for cleanup
+import time
+time.sleep(10)
+
+# Now deploy new pipelines with different load balancing
+# databricks bundle deploy
+```
+
+**⚠️ WARNING**: This approach:
+- Deletes pipeline history and lineage
+- May cause temporary data access issues
+- Requires careful coordination in production
+
+#### Option 3: Manual Table Transfer (Advanced)
+
+Transfer table ownership between pipelines:
+
+```python
+from databricks.sdk import WorkspaceClient
+
+w = WorkspaceClient()
+
+# Step 1: Stop all pipelines that might access the tables
+# Step 2: Drop the tables from Unity Catalog
+spark.sql("DROP TABLE IF EXISTS osipi.bronze.pi_dataservers")
+
+# Step 3: Deploy new pipelines with updated load balancing
+# The new pipelines will recreate the tables with full refresh
+```
+
+**⚠️ WARNING**: This causes data loss. Only use in non-production environments.
+
+### Best Practices
+
+1. **Plan load balancing upfront** - Minimize changes after initial deployment
+2. **Use version suffixes** for experimentation:
+   - `bronze_v1`, `bronze_v2`, `bronze_v3`
+   - Or: `bronze_by_category`, `bronze_by_size`, etc.
+3. **Document load balancing strategy** in your DAB comments
+4. **Test in dev/staging** before production changes
+5. **Use different catalogs** for different load balancing experiments:
+   - `osipi_test.bronze` for testing new groupings
+   - `osipi_prod.bronze` for stable production
+
+### Validation Before Deployment
+
+Add this check to your deployment workflow:
+
+```python
+from databricks.sdk import WorkspaceClient
+
+def check_table_ownership_conflicts(catalog, schema, tables, exclude_pipeline_ids=[]):
+    """Check if any tables are owned by other pipelines."""
+    w = WorkspaceClient()
+
+    conflicts = []
+    for table in tables:
+        try:
+            table_info = w.tables.get(full_name=f"{catalog}.{schema}.{table}")
+            if table_info.properties and "pipelines.pipelineId" in table_info.properties:
+                owner_id = table_info.properties["pipelines.pipelineId"]
+                if owner_id not in exclude_pipeline_ids:
+                    conflicts.append((table, owner_id))
+        except Exception:
+            pass  # Table doesn't exist yet, no conflict
+
+    if conflicts:
+        print("⚠️ TABLE OWNERSHIP CONFLICTS DETECTED:")
+        for table, owner_id in conflicts:
+            print(f"  - {table} is owned by pipeline {owner_id}")
+        print("\nOptions:")
+        print("  1. Use a different target schema (--schema bronze_v2)")
+        print("  2. Delete the old pipelines first")
+        print("  3. Drop the conflicting tables")
+        return False
+
+    print("✓ No table ownership conflicts detected")
+    return True
+
+# Example usage
+tables_to_ingest = ["pi_dataservers", "pi_points", ...]
+check_table_ownership_conflicts("osipi", "bronze", tables_to_ingest)
+```
+
 ## Troubleshooting
 
 ### Error: "Connection type HTTP is not supported"
@@ -383,6 +522,10 @@ community-connector create_connection <source> <conn_name> -o '{...}'
 from libs.source_loader import get_register_function
 get_register_function("osipi")(spark)
 ```
+
+### Error: "Table is already managed by pipeline"
+
+**Solution**: See the detailed section above on "Table Ownership and Load Balancing Changes"
 
 ### Pipelines not finding tables
 
