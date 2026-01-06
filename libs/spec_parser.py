@@ -1,3 +1,6 @@
+"""Parser for LakeFlow connector pipeline specifications."""
+
+# pylint: disable=too-few-public-methods
 from typing import List, Dict, Any, Optional
 import json
 
@@ -51,9 +54,7 @@ class TableSpec(BaseModel):
 
     @field_validator("table_configuration", mode="before")
     @classmethod
-    def normalize_table_configuration(
-        cls, v: Optional[Dict[str, Any]]
-    ) -> Optional[Dict[str, str]]:
+    def normalize_table_configuration(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, str]]:
         """
         Ensure table_configuration is a mapping of string -> string.
 
@@ -95,39 +96,28 @@ class PipelineSpec(BaseModel):
     """
     Top-level pipeline specification.
 
-    - Either `connection_name` OR `inline_options` is required (mutually exclusive).
-    - `connection_name`: Reference to a UC Connection (preferred when supported)
-    - `inline_options`: Direct options dict (fallback when UC Connection doesn't support option injection)
+    - `connection_name` is required and must be a non-empty string.
     - `objects` is required, must be a non-empty list, and each object
       must be a `table` with a `source_table` field.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    connection_name: Optional[StrictStr] = None
-    inline_options: Optional[Dict[str, Any]] = None
+    connection_name: StrictStr
     objects: List[ObjectSpec]
 
     @field_validator("connection_name")
     @classmethod
-    def connection_name_not_empty(cls, v: Optional[StrictStr]) -> Optional[StrictStr]:
-        if v is not None and not v.strip():
-            raise ValueError("'connection_name' must be a non-empty string if provided")
+    def connection_name_not_empty(cls, v: StrictStr) -> StrictStr:
+        """Validate that connection_name is not empty or whitespace-only."""
+        if not v.strip():
+            raise ValueError("'connection_name' must be a non-empty string")
         return v
-
-    def model_post_init(self, __context):
-        """Ensure exactly one of connection_name or inline_options is provided."""
-        has_connection = self.connection_name is not None
-        has_inline = self.inline_options is not None
-
-        if not has_connection and not has_inline:
-            raise ValueError("Either 'connection_name' or 'inline_options' must be provided")
-        if has_connection and has_inline:
-            raise ValueError("Only one of 'connection_name' or 'inline_options' can be provided, not both")
 
     @field_validator("objects")
     @classmethod
     def objects_must_not_be_empty(cls, v: List[ObjectSpec]) -> List[ObjectSpec]:
+        """Validate that objects list is not empty."""
         if not v:
             raise ValueError("'objects' must be a non-empty list")
         return v
@@ -172,32 +162,14 @@ class SpecParser:
             # Keep a simple ValueError surface compatible with previous behaviour
             raise ValueError(f"Invalid pipeline spec: {e}") from e
 
-    def connection_name(self) -> Optional[str]:
+    def connection_name(self) -> str:
         """
         Return the connection name from the specification.
 
         Returns:
-            The connection name as a string, or None if using inline_options.
+            The connection name as a string.
         """
         return self._model.connection_name
-
-    def inline_options(self) -> Optional[Dict[str, Any]]:
-        """
-        Return the inline options from the specification.
-
-        Returns:
-            The inline options dict, or None if using connection_name.
-        """
-        return self._model.inline_options
-
-    def uses_inline_options(self) -> bool:
-        """
-        Check if the spec uses inline_options instead of a UC Connection.
-
-        Returns:
-            True if using inline_options, False if using connection_name.
-        """
-        return self._model.inline_options is not None
 
     def get_table_list(self) -> List[str]:
         """
@@ -276,9 +248,7 @@ class SpecParser:
                 if primary_keys_value is None:
                     return None
                 # If it's a JSON string (list was serialized), parse it
-                if isinstance(
-                    primary_keys_value, str
-                ) and primary_keys_value.startswith("["):
+                if isinstance(primary_keys_value, str) and primary_keys_value.startswith("["):
                     return json.loads(primary_keys_value)
                 # If it's a single string, return as a single-item list
                 return (
@@ -314,8 +284,9 @@ class SpecParser:
         Returns:
             The full destination table name in the format
             'destination_catalog.destination_schema.destination_table',
-            or 'destination_catalog.destination_schema.table_name' if destination_table is not specified,
-            or table_name if destination_catalog or destination_schema is not specified.
+            or 'destination_catalog.destination_schema.table_name' if destination_table is
+            not specified, or table_name if destination_catalog or destination_schema is
+            not specified.
 
         Raises:
             ValueError: If the table_name is not found in the object list.
@@ -328,7 +299,6 @@ class SpecParser:
 
                 if catalog is None or schema is None:
                     return table
-                else:
-                    return f"`{catalog}`.`{schema}`.`{table}`"
+                return f"`{catalog}`.`{schema}`.`{table}`"
 
         raise ValueError(f"Table '{table_name}' not found in the pipeline spec")

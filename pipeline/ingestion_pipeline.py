@@ -5,22 +5,9 @@ from pyspark.sql.functions import col, expr
 from libs.spec_parser import SpecParser
 
 
-def _apply_connection_options(reader, connection_name: str | None, inline_options: dict | None):
-    """Helper to apply either UC Connection or inline options to a reader"""
-    if connection_name:
-        return reader.option("databricks.connection", connection_name)
-    elif inline_options:
-        for key, value in inline_options.items():
-            reader = reader.option(key, value)
-        return reader
-    else:
-        raise ValueError("Either connection_name or inline_options must be provided")
-
-
 def _create_cdc_table(
     spark,
-    connection_name: str | None,
-    inline_options: dict | None,
+    connection_name: str,
     source_table: str,
     destination_table: str,
     primary_keys: List[str],
@@ -33,10 +20,9 @@ def _create_cdc_table(
 
     @sdp.view(name=view_name)
     def v():
-        reader = spark.readStream.format("lakeflow_connect")
-        reader = _apply_connection_options(reader, connection_name, inline_options)
         return (
-            reader
+            spark.readStream.format("lakeflow_connect")
+            .option("databricks.connection", connection_name)
             .option("tableName", source_table)
             .options(**table_config)
             .load()
@@ -54,8 +40,7 @@ def _create_cdc_table(
 
 def _create_snapshot_table(
     spark,
-    connection_name: str | None,
-    inline_options: dict | None,
+    connection_name: str,
     source_table: str,
     destination_table: str,
     primary_keys: List[str],
@@ -67,10 +52,9 @@ def _create_snapshot_table(
 
     @sdp.view(name=view_name)
     def snapshot_view():
-        reader = spark.read.format("lakeflow_connect")
-        reader = _apply_connection_options(reader, connection_name, inline_options)
         return (
-            reader
+            spark.read.format("lakeflow_connect")
+            .option("databricks.connection", connection_name)
             .option("tableName", source_table)
             .options(**table_config)
             .load()
@@ -87,8 +71,7 @@ def _create_snapshot_table(
 
 def _create_append_table(
     spark,
-    connection_name: str | None,
-    inline_options: dict | None,
+    connection_name: str,
     source_table: str,
     destination_table: str,
     view_name: str,
@@ -100,29 +83,20 @@ def _create_append_table(
 
     @sdp.append_flow(name=view_name, target=destination_table)
     def af():
-        reader = spark.readStream.format("lakeflow_connect")
-        reader = _apply_connection_options(reader, connection_name, inline_options)
         return (
-            reader
+            spark.readStream.format("lakeflow_connect")
+            .option("databricks.connection", connection_name)
             .option("tableName", source_table)
             .options(**table_config)
             .load()
         )
 
 
-def _get_table_metadata(spark, connection_name: str | None, inline_options: dict | None, table_list: list[str]) -> dict:
+def _get_table_metadata(spark, connection_name: str, table_list: list[str]) -> dict:
     """Get table metadata (primary_keys, cursor_field, ingestion_type etc.)"""
-    reader = spark.read.format("lakeflow_connect")
-
-    # Use either UC Connection or inline options
-    if connection_name:
-        reader = reader.option("databricks.connection", connection_name)
-    elif inline_options:
-        for key, value in inline_options.items():
-            reader = reader.option(key, value)
-
     df = (
-        reader
+        spark.read.format("lakeflow_connect")
+        .option("databricks.connection", connection_name)
         .option("tableName", "_lakeflow_metadata")
         .option("tableNameList", ",".join(table_list))
         .load()
@@ -146,10 +120,9 @@ def ingest(spark, pipeline_spec: dict) -> None:
     # parse the pipeline spec
     spec = SpecParser(pipeline_spec)
     connection_name = spec.connection_name()
-    inline_options = spec.inline_options()
     table_list = spec.get_table_list()
 
-    metadata = _get_table_metadata(spark, connection_name, inline_options, table_list)
+    metadata = _get_table_metadata(spark, connection_name, table_list)
 
     def _ingest_table(table: str) -> None:
         """Helper function to ingest a single table"""
@@ -172,7 +145,6 @@ def ingest(spark, pipeline_spec: dict) -> None:
             _create_cdc_table(
                 spark,
                 connection_name,
-                inline_options,
                 table,
                 destination_table,
                 primary_keys,
@@ -185,7 +157,6 @@ def ingest(spark, pipeline_spec: dict) -> None:
             _create_snapshot_table(
                 spark,
                 connection_name,
-                inline_options,
                 table,
                 destination_table,
                 primary_keys,
@@ -197,7 +168,6 @@ def ingest(spark, pipeline_spec: dict) -> None:
             _create_append_table(
                 spark,
                 connection_name,
-                inline_options,
                 table,
                 destination_table,
                 view_name,
