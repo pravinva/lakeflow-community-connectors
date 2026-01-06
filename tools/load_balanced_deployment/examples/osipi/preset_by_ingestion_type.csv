@@ -1,0 +1,15 @@
+source_table,category,table_configuration_json
+pi_dataservers,snapshot,{}
+pi_points,snapshot,{}
+pi_point_attributes,snapshot,{}
+pi_assetservers,snapshot,{}
+pi_af_databases,snapshot,{}
+pi_af_hierarchy,snapshot,{}
+pi_af_elements,snapshot,{}
+pi_af_attributes,snapshot,{}
+pi_eventframes,snapshot,{}
+pi_eventframe_attributes,snapshot,{}
+pi_timeseries,append,{}
+pi_streamset_recorded,append,{}
+pi_streamset_interpolated,append,{}
+pi_streamset_plot,append,{}

@@ -64,6 +64,11 @@ osipi_asset_framework_pipeline (5 tables, runs weekly)
 
 ## Quick Start
 
+### Two Approaches: CLI vs Notebooks
+
+**CLI Approach** (this page): Command-line tools for automation and CI/CD
+**Notebook Approach**: Interactive Databricks notebook - see [`notebooks/README.md`](notebooks/README.md)
+
 ### Prerequisites
 
 1. UC Connection created with GENERIC_LAKEFLOW_CONNECT type:
@@ -73,7 +78,25 @@ osipi_asset_framework_pipeline (5 tables, runs weekly)
 
 2. Connector source code deployed to workspace
 
-### Step 1: Discover and Classify Tables
+### Using Preset CSVs (Recommended)
+
+Skip discovery and use preset CSV examples:
+
+```bash
+# Use preset CSV for OSIPI
+python3 tools/load_balanced_deployment/generate_ingest_files.py \
+  --csv tools/load_balanced_deployment/examples/osipi/preset_by_category_and_ingestion.csv \
+  --output-dir /tmp/osipi_ingest_files \
+  --source-name osipi \
+  --connection-name osipi_connection_lakeflow \
+  --catalog osipi \
+  --schema bronze \
+  --common-table-config-json '{}'
+```
+
+See [`examples/osipi/README.md`](examples/osipi/README.md) for available presets.
+
+### Step 1: Discover and Classify Tables (Optional)
 
 Auto-discover tables from connector and classify into groups:
 
@@ -271,6 +294,76 @@ resources:
 - Isolated failures
 - Independent scheduling (timeseries every 15min, metadata daily)
 - Clear observability per group
+
+## File Storage Best Practices
+
+### Workspace Files vs UC Volumes
+
+When deploying generated ingest files, you have two options:
+
+#### Option 1: Workspace Files (Recommended for Code)
+
+Best for Python code files like `ingest_*.py`:
+
+```bash
+# CLI approach
+databricks workspace import-dir /tmp/osipi_ingest_files /Workspace/Users/user@company.com/osipi_ingest
+
+# Notebook/SDK approach
+for file in ingest_files:
+    with open(file, 'r') as f:
+        workspace_client.workspace.import_(
+            path=f"/Workspace/Users/{username}/osipi_ingest/{file.name}",
+            format=ImportFormat.SOURCE,
+            content=base64.b64encode(f.read().encode()).decode()
+        )
+```
+
+**DAB YAML references**:
+```yaml
+libraries:
+  - file:
+      path: /Workspace/Users/user@company.com/osipi_ingest/ingest_metadata_snapshot.py
+```
+
+#### Option 2: UC Volumes (Recommended for Governed Storage)
+
+Best for data files and artifacts requiring governance:
+
+```python
+# Create volume first (one-time setup)
+spark.sql("CREATE VOLUME IF NOT EXISTS main.default.deployment_artifacts")
+
+# Upload files using dbutils.fs with UC Volumes path
+for file in ingest_files:
+    dbutils.fs.cp(
+        f"file://{file}",
+        f"/Volumes/main/default/deployment_artifacts/{file.name}"
+    )
+```
+
+**DAB YAML references**:
+```yaml
+libraries:
+  - file:
+      path: /Volumes/main/default/deployment_artifacts/ingest_metadata_snapshot.py
+```
+
+### What NOT to Use
+
+**DEPRECATED - Do NOT use**:
+- ❌ DBFS root paths: `/dbfs/...`
+- ❌ DBFS mount paths: `/mnt/...`
+- ❌ `dbutils.fs.mount()` commands
+
+These are deprecated in Unity Catalog environments and bypass governance controls.
+
+### Key Points
+
+1. **dbutils.fs utilities still work** - but use them with UC Volumes paths (`/Volumes/...`), not DBFS
+2. **Workspace files are appropriate for code** - DLT pipelines can reference `/Workspace/...` paths
+3. **UC Volumes provide governance** - use for data files, artifacts, and shared resources
+4. **DBFS is deprecated** - avoid all DBFS root and mount patterns
 
 ## Troubleshooting
 

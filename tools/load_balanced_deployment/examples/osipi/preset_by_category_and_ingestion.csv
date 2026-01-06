@@ -1,0 +1,15 @@
+source_table,category,table_configuration_json
+pi_dataservers,metadata_snapshot,{}
+pi_points,metadata_snapshot,{}
+pi_point_attributes,metadata_snapshot,{}
+pi_timeseries,timeseries_append,{}
+pi_streamset_recorded,timeseries_append,{}
+pi_streamset_interpolated,timeseries_append,{}
+pi_streamset_plot,timeseries_append,{}
+pi_assetservers,asset_framework_snapshot,{}
+pi_af_databases,asset_framework_snapshot,{}
+pi_af_hierarchy,asset_framework_snapshot,{}
+pi_af_elements,asset_framework_snapshot,{}
+pi_af_attributes,asset_framework_snapshot,{}
+pi_eventframes,event_frames_snapshot,{}
+pi_eventframe_attributes,event_frames_snapshot,{}
