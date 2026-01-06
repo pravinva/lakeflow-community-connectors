@@ -1,22 +1,8 @@
+# pylint: disable=no-member
 from typing import List
 from pyspark import pipelines as sdp
-from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, expr
 from libs.spec_parser import SpecParser
-
-
-def _active_spark():
-    """
-    Get an active SparkSession without capturing SparkSession in serialized closures.
-
-    In Lakeflow/SDP pipelines, @sdp.view / @sdp.append_flow functions may be serialized.
-    Capturing `spark` from an outer scope can trigger:
-      [CONTEXT_ONLY_VALID_ON_DRIVER]
-    """
-    s = SparkSession.getActiveSession()
-    if s is not None:
-        return s
-    return SparkSession.builder.getOrCreate()
 
 
 def _create_cdc_table(
@@ -34,7 +20,6 @@ def _create_cdc_table(
 
     @sdp.view(name=view_name)
     def v():
-        spark = _active_spark()
         return (
             spark.readStream.format("lakeflow_connect")
             .option("databricks.connection", connection_name)
@@ -67,7 +52,6 @@ def _create_snapshot_table(
 
     @sdp.view(name=view_name)
     def snapshot_view():
-        spark = _active_spark()
         return (
             spark.read.format("lakeflow_connect")
             .option("databricks.connection", connection_name)
@@ -99,7 +83,6 @@ def _create_append_table(
 
     @sdp.append_flow(name=view_name, target=destination_table)
     def af():
-        spark = _active_spark()
         return (
             spark.readStream.format("lakeflow_connect")
             .option("databricks.connection", connection_name)
@@ -109,14 +92,13 @@ def _create_append_table(
         )
 
 
-def _get_table_metadata(spark, connection_name: str, table_list: list[str], base_options: dict[str, str] | None = None) -> dict:
+def _get_table_metadata(spark, connection_name: str, table_list: list[str]) -> dict:
     """Get table metadata (primary_keys, cursor_field, ingestion_type etc.)"""
     df = (
         spark.read.format("lakeflow_connect")
         .option("databricks.connection", connection_name)
         .option("tableName", "_lakeflow_metadata")
         .option("tableNameList", ",".join(table_list))
-        .options(**(base_options or {}))
         .load()
     )
     metadata = {}
@@ -140,19 +122,7 @@ def ingest(spark, pipeline_spec: dict) -> None:
     connection_name = spec.connection_name()
     table_list = spec.get_table_list()
 
-    # Base options needed for the metadata read.
-    # Some environments do not inject arbitrary UC connection options into the worker options,
-    # so we forward required runtime options from the table_configuration (if provided).
-    base_options: dict[str, str] = {}
-    for t in table_list:
-        cfg = spec.get_table_configuration(t)
-        # Forward base URL + auth + debug knobs so `_lakeflow_metadata` can be read successfully.
-        for k in ("pi_base_url", "pi_web_api_url", "access_token", "bearer_value_tmp", "requests_verify", "debug_http"):
-            v = cfg.get(k) if isinstance(cfg, dict) else None
-            if v and k not in base_options:
-                base_options[k] = str(v)
-
-    metadata = _get_table_metadata(spark, connection_name, table_list, base_options=base_options)
+    metadata = _get_table_metadata(spark, connection_name, table_list)
 
     def _ingest_table(table: str) -> None:
         """Helper function to ingest a single table"""
