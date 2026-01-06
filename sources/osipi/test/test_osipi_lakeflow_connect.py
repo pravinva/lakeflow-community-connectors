@@ -77,9 +77,7 @@ def _load_live_init_options() -> Dict[str, Any] | None:
         if client_id:
             opts["client_id"] = client_id
         if client_secret:
-            # Support both the canonical name and the temporary UC workaround name.
             opts["client_secret"] = client_secret
-            opts["client_value_tmp"] = client_secret
 
         return opts
 
