@@ -95,22 +95,35 @@ class PipelineSpec(BaseModel):
     """
     Top-level pipeline specification.
 
-    - `connection_name` is required and must be a non-empty string.
+    - Either `connection_name` OR `inline_options` is required (mutually exclusive).
+    - `connection_name`: Reference to a UC Connection (preferred when supported)
+    - `inline_options`: Direct options dict (fallback when UC Connection doesn't support option injection)
     - `objects` is required, must be a non-empty list, and each object
       must be a `table` with a `source_table` field.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    connection_name: StrictStr
+    connection_name: Optional[StrictStr] = None
+    inline_options: Optional[Dict[str, Any]] = None
     objects: List[ObjectSpec]
 
     @field_validator("connection_name")
     @classmethod
-    def connection_name_not_empty(cls, v: StrictStr) -> StrictStr:
-        if not v.strip():
-            raise ValueError("'connection_name' must be a non-empty string")
+    def connection_name_not_empty(cls, v: Optional[StrictStr]) -> Optional[StrictStr]:
+        if v is not None and not v.strip():
+            raise ValueError("'connection_name' must be a non-empty string if provided")
         return v
+
+    def model_post_init(self, __context):
+        """Ensure exactly one of connection_name or inline_options is provided."""
+        has_connection = self.connection_name is not None
+        has_inline = self.inline_options is not None
+
+        if not has_connection and not has_inline:
+            raise ValueError("Either 'connection_name' or 'inline_options' must be provided")
+        if has_connection and has_inline:
+            raise ValueError("Only one of 'connection_name' or 'inline_options' can be provided, not both")
 
     @field_validator("objects")
     @classmethod
@@ -159,14 +172,32 @@ class SpecParser:
             # Keep a simple ValueError surface compatible with previous behaviour
             raise ValueError(f"Invalid pipeline spec: {e}") from e
 
-    def connection_name(self) -> str:
+    def connection_name(self) -> Optional[str]:
         """
         Return the connection name from the specification.
 
         Returns:
-            The connection name as a string.
+            The connection name as a string, or None if using inline_options.
         """
         return self._model.connection_name
+
+    def inline_options(self) -> Optional[Dict[str, Any]]:
+        """
+        Return the inline options from the specification.
+
+        Returns:
+            The inline options dict, or None if using connection_name.
+        """
+        return self._model.inline_options
+
+    def uses_inline_options(self) -> bool:
+        """
+        Check if the spec uses inline_options instead of a UC Connection.
+
+        Returns:
+            True if using inline_options, False if using connection_name.
+        """
+        return self._model.inline_options is not None
 
     def get_table_list(self) -> List[str]:
         """
