@@ -11,7 +11,7 @@ source_name = "osipi"
 # OSIPI Ingestion - Core tables to osipi.bronze
 
 pipeline_spec = {
-    "connection_name": "osipi_connection",
+    "connection_name": "osipi_connection_lakeflow",
     "objects": [
         # Data Servers table
         {
