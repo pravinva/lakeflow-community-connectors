@@ -9,9 +9,15 @@ source_name = "osipi"
 # INGESTION PIPELINE CONFIGURATION
 # =============================================================================
 # OSIPI Ingestion - Core tables to osipi.bronze
+# NOTE: Using inline options instead of UC Connection due to platform limitation
+# (HTTP connection type not supported for options injection)
 
 pipeline_spec = {
-    "connection_name": "osipi_connection",
+    "inline_options": {
+        "sourceName": "osipi",
+        "pi_base_url": "https://mock-piwebapi-912141448724.us-central1.run.app",
+        "bearer_value": "{{secrets/sp-osipi/mock-bearer-token}}"
+    },
     "objects": [
         # Data Servers table
         {
