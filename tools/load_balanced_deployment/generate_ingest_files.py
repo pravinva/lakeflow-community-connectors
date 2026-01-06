@@ -78,31 +78,56 @@ def _emit_ingest_py(
     common_table_config: Dict[str, str],
     tables: List[Tuple[str, Dict[str, str]]],
 ) -> str:
+    # Build objects list with proper formatting
+    objects_list = []
+    for source_table, table_cfg in tables:
+        merged_cfg = {**common_table_config, **table_cfg}
+        obj = {
+            "table": {
+                "source_table": source_table,
+                "destination_catalog": catalog,
+                "destination_schema": schema,
+            }
+        }
+        if merged_cfg:
+            obj["table"]["table_configuration"] = merged_cfg
+        objects_list.append(obj)
+
+    # Format objects for readability
+    objects_str = "[\n"
+    for obj in objects_list:
+        objects_str += "        {\n"
+        objects_str += "            \"table\": {\n"
+        objects_str += f"                \"source_table\": \"{obj['table']['source_table']}\",\n"
+        objects_str += f"                \"destination_catalog\": \"{obj['table']['destination_catalog']}\",\n"
+        objects_str += f"                \"destination_schema\": \"{obj['table']['destination_schema']}\",\n"
+        if "table_configuration" in obj["table"]:
+            objects_str += f"                \"table_configuration\": {obj['table']['table_configuration']!r},\n"
+        objects_str += "            }\n"
+        objects_str += "        },\n"
+    objects_str += "    ]"
+
     return f'''# Databricks notebook source
 from pipeline.ingestion_pipeline import ingest
 from libs.source_loader import get_register_function
 
-get_register_function({source_name!r})(spark)
+# Connector source name
+source_name = "{source_name}"
 
-COMMON_TABLE_CONFIG = {common_table_config!r}
-
-TABLES = {tables!r}
+# =============================================================================
+# INGESTION PIPELINE CONFIGURATION
+# =============================================================================
 
 pipeline_spec = {{
-    "connection_name": {connection_name!r},
-    "objects": [
-        {{
-            "table": {{
-                "source_table": source_table,
-                "destination_catalog": {catalog!r},
-                "destination_schema": {schema!r},
-                "table_configuration": {{**COMMON_TABLE_CONFIG, **table_cfg}},
-            }}
-        }}
-        for (source_table, table_cfg) in TABLES
-    ],
+    "connection_name": "{connection_name}",
+    "objects": {objects_str},
 }}
 
+# Dynamically import and register the LakeFlow source
+register_lakeflow_source = get_register_function(source_name)
+register_lakeflow_source(spark)
+
+# Ingest the tables specified in the pipeline spec
 ingest(spark, pipeline_spec)
 '''
 
