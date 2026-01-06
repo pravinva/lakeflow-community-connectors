@@ -12,11 +12,14 @@ source_name = "osipi"
 # NOTE: Using inline options instead of UC Connection due to platform limitation
 # (HTTP connection type not supported for options injection)
 
+# Resolve secrets at runtime using dbutils
+bearer_token = dbutils.secrets.get(scope="sp-osipi", key="mock-bearer-token")
+
 pipeline_spec = {
     "inline_options": {
         "sourceName": "osipi",
         "pi_base_url": "https://mock-piwebapi-912141448724.us-central1.run.app",
-        "bearer_value": "{{secrets/sp-osipi/mock-bearer-token}}"
+        "bearer_value": bearer_token
     },
     "objects": [
         # Data Servers table
