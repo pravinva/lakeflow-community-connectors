@@ -297,6 +297,15 @@ class LakeflowConnect:
         All configuration must come from `options`, including UC Connection-injected
         options when `.option("databricks.connection", <name>)` is used.
         """
+        # DEBUG: Log all received options to verify UC Connection injection
+        print(f"[OSIPI DEBUG] __init__ received options keys: {list(options.keys())}")
+        print(f"[OSIPI DEBUG] sourceName: {options.get('sourceName')}")
+        print(f"[OSIPI DEBUG] pi_base_url: {options.get('pi_base_url')}")
+        print(f"[OSIPI DEBUG] host: {options.get('host')}")
+        print(f"[OSIPI DEBUG] bearer_token present: {'bearer_token' in options}")
+        print(f"[OSIPI DEBUG] access_token present: {'access_token' in options}")
+        print(f"[OSIPI DEBUG] bearer_value present: {'bearer_value' in options}")
+
         self.options = options
 
         # NOTE: Do not hard-fail in __init__ if pi_base_url is missing.
