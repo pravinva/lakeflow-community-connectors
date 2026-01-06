@@ -925,8 +925,11 @@ class LakeflowConnect:
             print(f"🔍 Using UC Connection: {connection_name}")
 
         # Extract auth parameters from options
-        # Support bearer_value as alternative to access_token (in case UC strips "token" options)
-        access_token = self.options.get("access_token") or self.options.get("bearer_value")
+        # Support multiple bearer token field names:
+        # - access_token (standard)
+        # - bearer_token (UC HTTP connection type standard field)
+        # - bearer_value (fallback in case of UC bugs)
+        access_token = self.options.get("access_token") or self.options.get("bearer_token") or self.options.get("bearer_value")
         workspace_host = self.options.get("workspace_host")
         client_id = self.options.get("client_id")
         client_secret = self.options.get("client_secret")
