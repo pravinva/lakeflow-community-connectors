@@ -78,7 +78,8 @@ def _emit_ingest_py(
     common_table_config: Dict[str, str],
     tables: List[Tuple[str, Dict[str, str]]],
 ) -> str:
-    return f'''from pipeline.ingestion_pipeline import ingest
+    return f'''# Databricks notebook source
+from pipeline.ingestion_pipeline import ingest
 from libs.source_loader import get_register_function
 
 get_register_function({source_name!r})(spark)
