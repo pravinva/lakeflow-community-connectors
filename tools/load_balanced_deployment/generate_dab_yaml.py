@@ -59,7 +59,8 @@ def generate_dab_yaml(
     schema: str,
     emit_jobs: bool = True,
     pause_jobs: bool = True,
-    cluster_config: Dict[str, Any] = None
+    cluster_config: Dict[str, Any] = None,
+    bundle_suffix: str = ""
 ) -> Dict[str, Any]:
     """Generate DAB YAML for file-based (not notebook!) load-balanced pipelines."""
 
@@ -89,9 +90,13 @@ def generate_dab_yaml(
         cluster_config = {"num_workers": 1}
 
     # Build YAML structure
+    bundle_name = f"{connector_name}_load_balanced"
+    if bundle_suffix:
+        bundle_name = f"{bundle_name}_{bundle_suffix}"
+
     dab = {
         "bundle": {
-            "name": f"{connector_name}_load_balanced"
+            "name": bundle_name
         },
         "variables": {
             "catalog": {"default": catalog},
@@ -109,12 +114,18 @@ def generate_dab_yaml(
     for group in sorted(groups.keys()):
         table_count = len(groups[group])
         pipeline_key = f"{connector_name}_{group}"
+        if bundle_suffix:
+            pipeline_key = f"{pipeline_key}_{bundle_suffix}"
         ingest_file = f"${{var.ingest_files_path}}/ingest_{group}.py"
 
         # Pipeline definition
         # CRITICAL: Community connectors REQUIRE channel: PREVIEW and serverless: true
+        pipeline_name = f"{connector_name.upper()} Load Balanced - {group.replace('_', ' ').title()} ({table_count} tables)"
+        if bundle_suffix:
+            pipeline_name = f"{pipeline_name} [{bundle_suffix}]"
+
         pipeline_def = {
-            "name": f"{connector_name.upper()} Load Balanced - {group.replace('_', ' ').title()} ({table_count} tables)",
+            "name": pipeline_name,
             "catalog": "${var.catalog}",
             "target": "${var.schema}",
             "channel": "PREVIEW",       # Required for PySpark Data Source API support
@@ -136,9 +147,15 @@ def generate_dab_yaml(
         # Generate job if schedule exists
         if emit_jobs and group in schedules:
             job_key = f"{connector_name}_{group}_scheduler"
+            if bundle_suffix:
+                job_key = f"{job_key}_{bundle_suffix}"
+
+            job_name = f"{connector_name.upper()} Load Balanced Scheduler - {group.replace('_', ' ').title()}"
+            if bundle_suffix:
+                job_name = f"{job_name} [{bundle_suffix}]"
 
             job_def = {
-                "name": f"{connector_name.upper()} Load Balanced Scheduler - {group.replace('_', ' ').title()}",
+                "name": job_name,
                 "schedule": {
                     "quartz_cron_expression": convert_cron_to_quartz(schedules[group]),
                     "timezone_id": "UTC",
@@ -177,6 +194,7 @@ def main():
     parser.add_argument("--emit-jobs", action="store_true", help="Generate scheduled jobs for pipelines with schedules")
     parser.add_argument("--pause-jobs", action="store_true", default=True, help="Create jobs in PAUSED state (default: True)")
     parser.add_argument("--num-workers", type=int, default=1, help="Number of workers for pipeline clusters (default: 1)")
+    parser.add_argument("--bundle-suffix", default="", help="Suffix to add to bundle, pipeline, and job names to prevent overwrites (e.g., timestamp)")
 
     args = parser.parse_args()
 
@@ -195,7 +213,8 @@ def main():
         schema=args.schema,
         emit_jobs=args.emit_jobs,
         pause_jobs=args.pause_jobs,
-        cluster_config=cluster_config
+        cluster_config=cluster_config,
+        bundle_suffix=args.bundle_suffix
     )
 
     output_path = Path(args.output_yaml)

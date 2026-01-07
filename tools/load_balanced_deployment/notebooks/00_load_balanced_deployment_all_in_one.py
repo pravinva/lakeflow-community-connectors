@@ -47,17 +47,21 @@ SCHEDULE_UNKNOWN = ""                # No schedule
 # DEPLOYMENT SETTINGS
 import os
 import uuid
+from datetime import datetime
 
 USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
 DATABRICKS_PROFILE = "dogfood"  # Change this to your Databricks CLI profile name
 
+# Unique run ID to prevent overwrites across multiple runs
+RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 # OUTPUT PATHS (using local /tmp directory to avoid DBFS I/O issues)
-WORK_DIR = f"/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{uuid.uuid4().hex[:8]}"
+WORK_DIR = f"/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{RUN_ID}"
 
 CSV_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_tables.csv"
 INGEST_FILES_DIR = f"{WORK_DIR}/{CONNECTOR_NAME}_ingest_files"
 DAB_YAML_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_bundle/databricks.yml"
-WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/{CONNECTOR_NAME}_ingest"
+WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/{CONNECTOR_NAME}_ingest_{RUN_ID}"
 CLUSTER_NUM_WORKERS = 2
 EMIT_SCHEDULED_JOBS = True
 PAUSE_JOBS = True  # Create jobs in PAUSED state
@@ -243,6 +247,7 @@ cmd = [
     "--catalog", DEST_CATALOG,
     "--schema", DEST_SCHEMA,
     "--num-workers", str(CLUSTER_NUM_WORKERS),
+    "--bundle-suffix", RUN_ID,
 ]
 
 if EMIT_SCHEDULED_JOBS:
