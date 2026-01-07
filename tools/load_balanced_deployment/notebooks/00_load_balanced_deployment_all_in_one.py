@@ -670,3 +670,75 @@ print(f"  ✓ Overwrite CSV/YAML/ingest files with latest")
 print(f"  ✓ Update existing pipelines and jobs (no duplicates)")
 print(f"\nTo trigger a pipeline update:")
 print(f"  w.pipelines.start_update(pipeline_id='<pipeline_id>', full_refresh=False)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 6: Start All Pipelines (Optional)
+# MAGIC
+# MAGIC Start all deployed pipelines to begin ingestion.
+
+# COMMAND ----------
+
+print("="*60)
+print("STARTING ALL PIPELINES")
+print("="*60)
+
+for name, pipeline_id in deployed_pipelines.items():
+    print(f"\nStarting pipeline: {name}")
+    print(f"  Pipeline ID: {pipeline_id}")
+
+    try:
+        update = w.pipelines.start_update(
+            pipeline_id=pipeline_id,
+            full_refresh=False  # Set to True for full refresh
+        )
+        print(f"  ✓ Started (Update ID: {update.update_id})")
+        print(f"  Monitor at: https://dogfood.cloud.databricks.com/#joblist/pipelines/{pipeline_id}")
+    except Exception as e:
+        print(f"  ✗ Failed to start: {e}")
+
+print(f"\n✓ Started {len(deployed_pipelines)} pipelines")
+print(f"\nMonitor all pipelines at:")
+print(f"  https://dogfood.cloud.databricks.com/#joblist/pipelines")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 7: Cleanup (Optional)
+# MAGIC
+# MAGIC **WARNING**: This will delete all deployed pipelines and jobs. Use with caution!
+
+# COMMAND ----------
+
+# Uncomment to enable cleanup
+# ENABLE_CLEANUP = True
+
+if 'ENABLE_CLEANUP' in locals() and ENABLE_CLEANUP:
+    print("="*60)
+    print("CLEANING UP DEPLOYED RESOURCES")
+    print("="*60)
+
+    # Delete pipelines
+    if 'deployed_pipelines' in locals():
+        print(f"\nDeleting {len(deployed_pipelines)} pipelines...")
+        for name, pipeline_id in deployed_pipelines.items():
+            try:
+                w.pipelines.delete(pipeline_id=pipeline_id)
+                print(f"  ✓ Deleted pipeline: {name}")
+            except Exception as e:
+                print(f"  ✗ Failed to delete {name}: {e}")
+
+    # Delete jobs
+    if 'deployed_jobs' in locals():
+        print(f"\nDeleting {len(deployed_jobs)} jobs...")
+        for name, job_id in deployed_jobs.items():
+            try:
+                w.jobs.delete(job_id=job_id)
+                print(f"  ✓ Deleted job: {name}")
+            except Exception as e:
+                print(f"  ✗ Failed to delete {name}: {e}")
+
+    print(f"\n✓ Cleanup complete")
+else:
+    print("Cleanup disabled. Set ENABLE_CLEANUP = True to enable.")
