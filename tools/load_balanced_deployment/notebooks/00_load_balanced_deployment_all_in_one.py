@@ -59,7 +59,8 @@ WORK_DIR = f"/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_d
 CSV_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_tables.csv"
 INGEST_FILES_DIR = f"{WORK_DIR}/{CONNECTOR_NAME}_ingest_files"
 DAB_YAML_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_bundle/databricks.yml"
-WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/{CONNECTOR_NAME}_ingest"
+# Upload ingest files to repo directory so they can import from pipeline/ and libs/
+WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/lakeflow-community-connectors/ingest/{CONNECTOR_NAME}"
 CLUSTER_NUM_WORKERS = 2
 EMIT_SCHEDULED_JOBS = True
 PAUSE_JOBS = True  # Create jobs in PAUSED state
