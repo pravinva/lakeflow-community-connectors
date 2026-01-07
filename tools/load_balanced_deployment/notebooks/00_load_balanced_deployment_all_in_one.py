@@ -286,12 +286,15 @@ result = subprocess.run(
     text=True
 )
 
-if result.returncode != 0:
-    print("ERROR during bundle validation:")
-    print(result.stderr)
-    raise Exception("Bundle validation failed")
+print(f"Return code: {result.returncode}")
+if result.stdout:
+    print(f"STDOUT:\n{result.stdout}")
+if result.stderr:
+    print(f"STDERR:\n{result.stderr}")
 
-print(result.stdout)
+if result.returncode != 0:
+    print("\nERROR: Bundle validation failed")
+    raise Exception("Bundle validation failed")
 
 print("\nRunning: databricks bundle deploy...")
 result = subprocess.run(
