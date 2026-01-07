@@ -64,7 +64,7 @@ EMIT_SCHEDULED_JOBS = True
 PAUSE_JOBS = True  # Create jobs in PAUSED state
 
 # Tool scripts workspace path - will be copied to DBFS in Step 1 for subprocess access
-TOOLS_DIR_WORKSPACE = "/Workspace/Repos/pravin.varma@databricks.com/lakeflow-community-connectors/tools/load_balanced_deployment"
+TOOLS_DIR_WORKSPACE = "/Workspace/Users/pravin.varma@databricks.com/lakeflow-community-connectors/tools/load_balanced_deployment"
 
 # COMMAND ----------
 
