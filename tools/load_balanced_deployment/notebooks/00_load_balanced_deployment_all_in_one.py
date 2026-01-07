@@ -45,12 +45,13 @@ SCHEDULE_CDC = "*/5 * * * *"         # Every 5 minutes
 SCHEDULE_UNKNOWN = ""                # No schedule
 
 # DEPLOYMENT SETTINGS
+import os
+import uuid
+
 USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
 
-# OUTPUT PATHS (using local /tmp with user-specific subdirectory)
-import tempfile
-import os
-WORK_DIR = tempfile.mkdtemp(prefix=f"load_balanced_deployment_{USERNAME.replace('@', '_').replace('.', '_')}_")
+# OUTPUT PATHS (using DBFS with user-specific subdirectory)
+WORK_DIR = f"/dbfs/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{uuid.uuid4().hex[:8]}"
 CSV_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_tables.csv"
 INGEST_FILES_DIR = f"{WORK_DIR}/{CONNECTOR_NAME}_ingest_files"
 DAB_YAML_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_bundle/databricks.yml"
@@ -59,8 +60,8 @@ CLUSTER_NUM_WORKERS = 2
 EMIT_SCHEDULED_JOBS = True
 PAUSE_JOBS = True  # Create jobs in PAUSED state
 
-# Tool scripts path (in repository)
-TOOLS_DIR = "/Workspace/Repos/pravin.varma@databricks.com/lakeflow-community-connectors/tools/load_balanced_deployment"
+# Tool scripts workspace path - will be copied to DBFS in Step 1 for subprocess access
+TOOLS_DIR_WORKSPACE = "/Workspace/Repos/pravin.varma@databricks.com/lakeflow-community-connectors/tools/load_balanced_deployment"
 
 # COMMAND ----------
 
@@ -73,13 +74,52 @@ TOOLS_DIR = "/Workspace/Repos/pravin.varma@databricks.com/lakeflow-community-con
 
 import subprocess
 import os
+import shutil
 from pathlib import Path
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.workspace import ExportFormat
+import base64
 
 # Create work directories
 Path(WORK_DIR).mkdir(parents=True, exist_ok=True)
 Path(INGEST_FILES_DIR).mkdir(parents=True, exist_ok=True)
 Path(DAB_YAML_PATH).parent.mkdir(parents=True, exist_ok=True)
 print(f"Using work directory: {WORK_DIR}")
+
+# Copy tool scripts to DBFS work directory for subprocess access
+# The /Workspace/Repos/ path is not accessible from subprocess in notebooks
+SCRIPTS_DIR = f"{WORK_DIR}/scripts"
+Path(SCRIPTS_DIR).mkdir(parents=True, exist_ok=True)
+
+# Get the current notebook's directory to find scripts
+# Use workspace API to export scripts from Repos
+w = WorkspaceClient()
+script_files = [
+    "discover_and_classify_tables.py",
+    "generate_ingest_files.py",
+    "generate_dab_yaml.py",
+    "utils.py"
+]
+
+print(f"Copying tool scripts to {SCRIPTS_DIR}...")
+for script_name in script_files:
+    workspace_path = f"{TOOLS_DIR_WORKSPACE}/{script_name}"
+    local_path = f"{SCRIPTS_DIR}/{script_name}"
+
+    try:
+        # Export from workspace
+        response = w.workspace.export(workspace_path, format=ExportFormat.SOURCE)
+        # Decode base64 content
+        content = base64.b64decode(response.content).decode('utf-8')
+        # Write to local DBFS path
+        with open(local_path, 'w') as f:
+            f.write(content)
+        print(f"  ✓ Copied {script_name}")
+    except Exception as e:
+        print(f"  ✗ Failed to copy {script_name}: {e}")
+
+# Point TOOLS_DIR to copied scripts for subprocess calls
+TOOLS_DIR = SCRIPTS_DIR
 
 if not USE_PRESET:
     print(f"Discovering tables from {CONNECTOR_NAME} connector...")
