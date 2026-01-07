@@ -386,9 +386,10 @@ def main():
         print("\nOSIPI supports multiple authentication methods:")
         print("  1. Bearer token (access_token)")
         print("  2. Basic auth (username/password)")
-        print("  3. Skip for now")
+        print("  3. OIDC/OAuth (client credentials)")
+        print("  4. Skip for now")
 
-        auth_choice = input("\nSelect authentication method (1-3): ").strip()
+        auth_choice = input("\nSelect authentication method (1-4): ").strip()
 
         if auth_choice == "1":
             # Bearer token authentication
@@ -412,6 +413,30 @@ def main():
             if password_cred:
                 credentials["password"] = password_cred["value"]
                 print(f"✓ Password configured (from {password_cred['source']})")
+
+        elif auth_choice == "3":
+            # OIDC/OAuth with client credentials
+            print("\nOIDC/OAuth Configuration:")
+            print("The connector will automatically handle token refresh.")
+            print("You need to provide client_id and client_secret.")
+
+            client_id_cred = prompt_for_secret(w, "client_id")
+            if client_id_cred:
+                credentials["client_id"] = client_id_cred["value"]
+                print(f"✓ Client ID configured (from {client_id_cred['source']})")
+
+            client_secret_cred = prompt_for_secret(w, "client_secret")
+            if client_secret_cred:
+                credentials["client_secret"] = client_secret_cred["value"]
+                print(f"✓ Client secret configured (from {client_secret_cred['source']})")
+
+            # Optional workspace_host for custom OIDC endpoints
+            print("\nOptional: Specify workspace_host for custom OIDC token endpoint.")
+            print("Default: Uses pi_base_url host with /oidc/v1/token path")
+            workspace_host_input = input("Enter workspace host (press Enter to skip): ").strip()
+            if workspace_host_input:
+                credentials["workspace_host"] = workspace_host_input
+                print(f"✓ Workspace host configured: {workspace_host_input}")
 
     # Create or update the connection
     create_connection(
