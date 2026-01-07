@@ -34,7 +34,7 @@ def _read_csv(path: Path) -> Dict[str, List[Tuple[str, Dict[str, str]]]]:
     out: Dict[str, List[Tuple[str, Dict[str, str]]]] = {}
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        required = {"source_table", "category", "table_configuration_json"}
+        required = {"source_table", "category"}
         missing = required - set(reader.fieldnames or [])
         if missing:
             raise ValueError(f"CSV missing required columns: {sorted(missing)}")
