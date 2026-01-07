@@ -226,6 +226,18 @@ def main() -> int:
         init_options = json.loads(args.init_options_json)
         if not isinstance(init_options, dict):
             raise ValueError("--init-options-json must be a JSON object")
+    else:
+        # If no init options provided, try to read from UC Connection
+        try:
+            from databricks.sdk import WorkspaceClient
+            w = WorkspaceClient()
+            conn = w.connections.get(args.connection_name)
+            if conn.options:
+                init_options = conn.options
+                print(f"Loaded credentials from UC Connection: {args.connection_name}")
+        except Exception as e:
+            print(f"Warning: Could not load UC Connection credentials: {e}")
+            print("Proceeding with empty init_options (may fail if connector requires auth)")
     category_prefix_map: Dict[str, str] = {}
     if args.category_prefix_map_json:
         category_prefix_map = json.loads(args.category_prefix_map_json)

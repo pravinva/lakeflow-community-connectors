@@ -30,16 +30,9 @@
 
 # CONNECTOR SETTINGS
 CONNECTOR_NAME = "osipi"  # Change to your connector: osipi, hubspot, github, etc.
-CONNECTION_NAME = "osipi_connection_lakeflow"  # UC Connection name
+CONNECTION_NAME = "osipi_connection_lakeflow"  # UC Connection name (must exist)
 DEST_CATALOG = "osipi"
 DEST_SCHEMA = "bronze"
-
-# CONNECTOR OPTIONS (for UC Connection creation/update)
-# These will be passed to the connector at runtime
-CONNECTOR_OPTIONS = {
-    "pi_base_url": "https://mock-osipi-server.example.com",  # Mock OSIPI server URL
-    "access_token": "<your-access-token-here>"  # Replace with your authentication token
-}
 
 # DISCOVERY OPTIONS (set USE_PRESET=True to skip discovery)
 USE_PRESET = False  # Set to True to use preset CSV instead of discovery
@@ -153,17 +146,13 @@ TOOLS_DIR = SCRIPTS_DIR
 
 if not USE_PRESET:
     print(f"Discovering tables from {CONNECTOR_NAME} connector...")
-
-    # Convert connector options to JSON for discovery
-    import json
-    connector_options_json = json.dumps(CONNECTOR_OPTIONS)
+    print(f"Using UC Connection: {CONNECTION_NAME}")
 
     cmd = [
         "python3",
         f"{TOOLS_DIR}/discover_and_classify_tables.py",
         "--connector-name", CONNECTOR_NAME,
         "--connector-python-file", CONNECTOR_PY_FILE,
-        "--init-options-json", connector_options_json,
         "--output-csv", CSV_PATH,
         "--connection-name", CONNECTION_NAME,
         "--dest-catalog", DEST_CATALOG,
