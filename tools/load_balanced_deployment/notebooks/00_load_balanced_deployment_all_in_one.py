@@ -325,96 +325,169 @@ print(f"\n✓ Uploaded {uploaded_count} ingest files to workspace")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 5: Deploy with Databricks Asset Bundle
+# MAGIC ## Step 5: Deploy Pipelines and Jobs
 # MAGIC
-# MAGIC Deploy pipelines using the generated DAB configuration.
+# MAGIC Deploy pipelines and jobs directly using Databricks SDK (CLI not available in notebooks).
 
 # COMMAND ----------
 
-import os
+import yaml
+from databricks.sdk.service.pipelines import PipelineLibrary, NotebookLibrary, FileLibrary
+from databricks.sdk.service.jobs import Task, PipelineTask, JobSettings, CronSchedule
 
-bundle_dir = str(Path(DAB_YAML_PATH).parent)
+# Read the generated DAB YAML to get configuration
+with open(DAB_YAML_PATH, 'r') as f:
+    dab_config = yaml.safe_load(f)
 
-print(f"Deploying bundle from {bundle_dir}...")
-print(f"Bundle directory contents:")
+print(f"Deploying pipelines and jobs from {DAB_YAML_PATH}...")
+print(f"\nConfiguration loaded:")
+print(f"  Bundle: {dab_config['bundle']['name']}")
+print(f"  Pipelines: {len(dab_config['resources']['pipelines'])}")
+print(f"  Jobs: {len(dab_config.get('resources', {}).get('jobs', {}))}")
 
-# List files in bundle directory
-for f in Path(bundle_dir).iterdir():
-    print(f"  - {f.name}")
+# Get variables
+variables = dab_config.get('variables', {})
+catalog = variables.get('catalog', {}).get('default', DEST_CATALOG)
+schema = variables.get('schema', {}).get('default', DEST_SCHEMA)
+connection_name = variables.get('connection_name', {}).get('default', CONNECTION_NAME)
+ingest_files_path = variables.get('ingest_files_path', {}).get('default', WORKSPACE_INGEST_PATH)
 
-# Deploy using databricks CLI
-os.chdir(bundle_dir)
+# Deploy pipelines
+deployed_pipelines = {}
+print("\n" + "="*60)
+print("DEPLOYING PIPELINES")
+print("="*60)
 
-print("\nRunning: databricks bundle validate...")
-result = subprocess.run(
-    ["databricks", "--profile", DATABRICKS_PROFILE, "bundle", "validate"],
-    capture_output=True,
-    text=True
-)
+for pipeline_key, pipeline_config in dab_config['resources']['pipelines'].items():
+    pipeline_name = pipeline_config['name']
+    print(f"\nCreating pipeline: {pipeline_name}")
 
-print(f"Return code: {result.returncode}")
-if result.stdout:
-    print(f"STDOUT:\n{result.stdout}")
-if result.stderr:
-    print(f"STDERR:\n{result.stderr}")
+    # Extract library path from config
+    library_config = pipeline_config['libraries'][0]
+    file_path = library_config['file']['path']
+    # Replace variable placeholders
+    file_path = file_path.replace('${var.ingest_files_path}', ingest_files_path)
 
-if result.returncode != 0:
-    print("\nERROR: Bundle validation failed")
-    raise Exception("Bundle validation failed")
+    try:
+        pipeline = w.pipelines.create(
+            name=pipeline_name,
+            catalog=catalog,
+            target=schema,
+            channel=pipeline_config.get('channel', 'PREVIEW'),
+            serverless=pipeline_config.get('serverless', True),
+            development=pipeline_config.get('development', True),
+            continuous=pipeline_config.get('continuous', False),
+            libraries=[
+                PipelineLibrary(
+                    file=FileLibrary(path=file_path)
+                )
+            ]
+        )
 
-print("\nRunning: databricks bundle deploy...")
-result = subprocess.run(
-    ["databricks", "--profile", DATABRICKS_PROFILE, "bundle", "deploy"],
-    capture_output=True,
-    text=True
-)
+        deployed_pipelines[pipeline_key] = pipeline.pipeline_id
+        print(f"  ✓ Created pipeline: {pipeline_name}")
+        print(f"    ID: {pipeline.pipeline_id}")
+    except Exception as e:
+        print(f"  ✗ Failed to create pipeline: {e}")
 
-if result.returncode != 0:
-    print("ERROR during bundle deployment:")
-    print(result.stderr)
-    raise Exception("Bundle deployment failed")
+# Deploy jobs (if any)
+if 'jobs' in dab_config.get('resources', {}) and EMIT_SCHEDULED_JOBS:
+    deployed_jobs = {}
+    print("\n" + "="*60)
+    print("DEPLOYING SCHEDULED JOBS")
+    print("="*60)
 
-print(result.stdout)
+    for job_key, job_config in dab_config['resources']['jobs'].items():
+        job_name = job_config['name']
+        print(f"\nCreating job: {job_name}")
+
+        # Get the pipeline reference
+        task_config = job_config['tasks'][0]
+        pipeline_task_config = task_config['pipeline_task']
+        pipeline_ref = pipeline_task_config['pipeline_id']
+
+        # Extract pipeline key from reference like "${resources.pipelines.osipi_snapshot_20260107_135911.id}"
+        import re
+        match = re.search(r'resources\.pipelines\.([^.]+)\.id', pipeline_ref)
+        if not match:
+            print(f"  ✗ Could not parse pipeline reference: {pipeline_ref}")
+            continue
+
+        referenced_pipeline_key = match.group(1)
+        if referenced_pipeline_key not in deployed_pipelines:
+            print(f"  ✗ Referenced pipeline not found: {referenced_pipeline_key}")
+            continue
+
+        pipeline_id = deployed_pipelines[referenced_pipeline_key]
+
+        # Get schedule info
+        schedule_config = job_config.get('schedule', {})
+        cron_expr = schedule_config.get('quartz_cron_expression')
+        timezone = schedule_config.get('timezone_id', 'UTC')
+        pause_status = schedule_config.get('pause_status', 'PAUSED')
+
+        try:
+            job = w.jobs.create(
+                name=job_name,
+                tasks=[
+                    Task(
+                        task_key=task_config['task_key'],
+                        pipeline_task=PipelineTask(pipeline_id=pipeline_id)
+                    )
+                ],
+                schedule=CronSchedule(
+                    quartz_cron_expression=cron_expr,
+                    timezone_id=timezone,
+                    pause_status=pause_status
+                )
+            )
+
+            deployed_jobs[job_key] = job.job_id
+            print(f"  ✓ Created job: {job_name}")
+            print(f"    ID: {job.job_id}")
+            print(f"    Schedule: {cron_expr} ({pause_status})")
+        except Exception as e:
+            print(f"  ✗ Failed to create job: {e}")
+
+print("\n" + "="*60)
+print("DEPLOYMENT SUMMARY")
+print("="*60)
+print(f"Pipelines created: {len(deployed_pipelines)}")
+if EMIT_SCHEDULED_JOBS and 'jobs' in dab_config.get('resources', {}):
+    print(f"Jobs created: {len(deployed_jobs)}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Step 6: Verify Deployment
 # MAGIC
-# MAGIC List deployed pipelines and jobs.
+# MAGIC Check the deployed pipelines and jobs.
 
 # COMMAND ----------
 
-from databricks.sdk.service.pipelines import PipelineStateInfo
+print("="*60)
+print("DEPLOYMENT VERIFICATION")
+print("="*60)
 
-# List pipelines matching connector name
-pipelines = w.pipelines.list_pipelines()
-
-print(f"Deployed pipelines for {CONNECTOR_NAME}:")
-connector_pipelines = [p for p in pipelines if CONNECTOR_NAME in (p.name or "").lower()]
-
-for pipeline in connector_pipelines:
-    state = pipeline.state or PipelineStateInfo.UNKNOWN
-    print(f"  - {pipeline.name}")
-    print(f"    ID: {pipeline.pipeline_id}")
-    print(f"    State: {state}")
+print(f"\n✓ Deployed {len(deployed_pipelines)} pipeline(s):")
+for pipeline_key, pipeline_id in deployed_pipelines.items():
+    pipeline_info = w.pipelines.get(pipeline_id)
+    print(f"  - {pipeline_info.name}")
+    print(f"    ID: {pipeline_id}")
+    print(f"    State: {pipeline_info.state}")
     print()
 
-if EMIT_SCHEDULED_JOBS:
-    # List jobs matching connector name
-    jobs = w.jobs.list()
-
-    print(f"\nDeployed scheduled jobs for {CONNECTOR_NAME}:")
-    connector_jobs = [j for j in jobs if CONNECTOR_NAME in (j.settings.name or "").lower()]
-
-    for job in connector_jobs:
-        schedule_info = job.settings.schedule
+if EMIT_SCHEDULED_JOBS and 'deployed_jobs' in locals():
+    print(f"✓ Deployed {len(deployed_jobs)} scheduled job(s):")
+    for job_key, job_id in deployed_jobs.items():
+        job_info = w.jobs.get(job_id)
+        schedule_info = job_info.settings.schedule
         schedule_str = "No schedule"
         if schedule_info:
             schedule_str = f"{schedule_info.quartz_cron_expression} ({schedule_info.pause_status})"
 
-        print(f"  - {job.settings.name}")
-        print(f"    ID: {job.job_id}")
+        print(f"  - {job_info.settings.name}")
+        print(f"    ID: {job_id}")
         print(f"    Schedule: {schedule_str}")
         print()
 
@@ -469,8 +542,11 @@ print("="*60)
 print("DEPLOYMENT COMPLETE")
 print("="*60)
 print(f"\nConnector: {CONNECTOR_NAME}")
-print(f"Pipelines deployed: {len(connector_pipelines)}")
-if EMIT_SCHEDULED_JOBS:
-    print(f"Scheduled jobs created: {len(connector_jobs)}")
+print(f"Run ID: {RUN_ID}")
+print(f"Pipelines deployed: {len(deployed_pipelines)}")
+if EMIT_SCHEDULED_JOBS and 'deployed_jobs' in locals():
+    print(f"Scheduled jobs created: {len(deployed_jobs)}")
 print(f"\nIngest files location: {WORKSPACE_INGEST_PATH}")
 print(f"DAB config: {DAB_YAML_PATH}")
+print(f"\nTo trigger a pipeline update:")
+print(f"  w.pipelines.start_update(pipeline_id='<pipeline_id>', full_refresh=False)")
