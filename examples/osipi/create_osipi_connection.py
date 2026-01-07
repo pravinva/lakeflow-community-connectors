@@ -206,6 +206,7 @@ def create_connection(
     w: WorkspaceClient,
     connection_name: str,
     credentials: dict,
+    osipi_url: str = None,
     update: bool = False
 ):
     """
@@ -215,22 +216,34 @@ def create_connection(
         w: WorkspaceClient instance
         connection_name: Name for the connection
         credentials: Dict of credential values (e.g., {"access_token": "Bearer xyz"})
+        osipi_url: Optional OSIPI Web API URL (for MockPI or custom endpoints)
         update: If True, update existing connection; if False, create new
     """
-    # Build connection options (public configuration)
+    # Build connection options (includes credentials - platform filters them from API responses)
     options = {
         "sourceName": "osipi",
         "externalOptionsAllowList": ",".join(OSIPI_EXTERNAL_OPTIONS),
     }
+
+    # Add OSIPI URL if provided (e.g., for MockPI)
+    if osipi_url:
+        options["pi_base_url"] = osipi_url
+
+    # Add credentials to options (like the UI does)
+    # Platform automatically filters these from API GET responses but injects them at runtime
+    if credentials:
+        options.update(credentials)
 
     print("\n" + "="*60)
     print("Connection Configuration")
     print("="*60)
     print(f"Connection Name: {connection_name}")
     print(f"Source: osipi")
+    if osipi_url:
+        print(f"OSIPI URL: {osipi_url}")
     print(f"External Options: {len(OSIPI_EXTERNAL_OPTIONS)} table options allowed")
     if credentials:
-        print(f"Credentials: Will be securely stored (not visible in API responses)")
+        print(f"Credentials: {list(credentials.keys())} (stored in options, filtered from API responses)")
     print("="*60)
 
     # Confirm before proceeding
@@ -258,17 +271,13 @@ def create_connection(
             )
             print("\n✓ Connection options updated successfully!")
         else:
-            # Create new connection with credentials
+            # Create new connection with credentials in options (like UI does)
             body = {
                 "name": connection_name,
                 "connection_type": "GENERIC_LAKEFLOW_CONNECT",
-                "options": options,
+                "options": options,  # Credentials are in options, not properties!
                 "comment": "OSIPI community connector connection"
             }
-
-            # Add credentials if provided (stored separately, not in options)
-            if credentials:
-                body["properties"] = credentials
 
             print(f"\nCreating connection '{connection_name}'...")
             result = w.api_client.do(
@@ -290,7 +299,7 @@ def create_connection(
         print(f"  2. Reference it in your DLT pipeline ingest files:")
         print(f"     connection_name=\"{connection_name}\"")
         if credentials:
-            print(f"  3. Credentials are injected automatically by the platform at runtime")
+            print(f"  3. Credentials are stored in options field and injected automatically at runtime")
         else:
             print(f"  3. No credentials configured - use platform credential injection")
 
@@ -318,6 +327,11 @@ def main():
         default=None,
         help="Databricks CLI profile to use (default: None, uses default auth)"
     )
+    parser.add_argument(
+        "--osipi-url",
+        default=None,
+        help="OSIPI Web API URL (for MockPI or custom endpoints)"
+    )
 
     args = parser.parse_args()
 
@@ -344,15 +358,26 @@ def main():
     print("\nThe connection will include:")
     print("  - sourceName: osipi")
     print(f"  - externalOptionsAllowList: {len(OSIPI_EXTERNAL_OPTIONS)} table options")
-    print("\nAuthentication credentials are injected via platform credentials,")
-    print("so you typically don't need to store them in the connection options.")
+    if args.osipi_url:
+        print(f"  - url: {args.osipi_url} (custom OSIPI endpoint)")
+    print("\nCredentials are stored in OPTIONS field (like the UI does).")
+    print("The platform filters them from API responses but injects them at runtime.")
+
+    # Prompt for OSIPI URL if not provided
+    osipi_url = args.osipi_url
+    if not osipi_url:
+        configure_url = input("\nDo you want to configure a custom OSIPI URL (e.g., MockPI)? (yes/no): ").strip().lower()
+        if configure_url in ["yes", "y"]:
+            osipi_url = input("Enter OSIPI Web API URL: ").strip()
+            if osipi_url:
+                print(f"✓ Custom URL configured: {osipi_url}")
 
     # Prompt for credentials (optional)
     print("\n" + "="*60)
     print("Optional: Configure Authentication Credentials")
     print("="*60)
-    print("\nCredentials are stored securely and injected by the platform at runtime.")
-    print("You can configure credentials now or add them later.")
+    print("\nCredentials will be stored in the OPTIONS field (matching UI behavior).")
+    print("They are filtered from API responses but injected at runtime.")
 
     configure_creds = input("\nDo you want to configure credentials? (yes/no): ").strip().lower()
 
@@ -393,6 +418,7 @@ def main():
         w=w,
         connection_name=args.connection_name,
         credentials=credentials,
+        osipi_url=osipi_url,
         update=args.update
     )
 
