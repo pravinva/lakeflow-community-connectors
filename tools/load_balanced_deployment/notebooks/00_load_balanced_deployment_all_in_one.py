@@ -44,14 +44,16 @@ SCHEDULE_APPEND = "*/15 * * * *"     # Every 15 minutes
 SCHEDULE_CDC = "*/5 * * * *"         # Every 5 minutes
 SCHEDULE_UNKNOWN = ""                # No schedule
 
-# OUTPUT PATHS
-WORK_DIR = "/tmp/load_balanced_deployment"
+# DEPLOYMENT SETTINGS
+USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
+
+# OUTPUT PATHS (use unique directory per user to avoid permission issues)
+import os
+USER_UID = os.getuid()
+WORK_DIR = f"/tmp/load_balanced_deployment_{USER_UID}"
 CSV_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_tables.csv"
 INGEST_FILES_DIR = f"{WORK_DIR}/{CONNECTOR_NAME}_ingest_files"
 DAB_YAML_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_bundle/databricks.yml"
-
-# DEPLOYMENT SETTINGS
-USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
 WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/{CONNECTOR_NAME}_ingest"
 CLUSTER_NUM_WORKERS = 2
 EMIT_SCHEDULED_JOBS = True
