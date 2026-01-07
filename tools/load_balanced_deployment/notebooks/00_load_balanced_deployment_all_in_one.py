@@ -358,11 +358,17 @@ pipeline_names_to_deploy = {spec['name']: key for key, spec in dab_config['resou
 existing_pipelines = {}
 
 try:
-    all_pipelines = list(w.pipelines.list_pipelines())
-    for p in all_pipelines:
+    # Filter by connector name pattern to avoid listing all workspace pipelines
+    # This reduces API calls and only checks relevant pipelines
+    filter_pattern = f"name LIKE '%{CONNECTOR_NAME.upper()}%'"
+    filtered_pipelines = list(w.pipelines.list_pipelines(filter=filter_pattern))
+
+    for p in filtered_pipelines:
         if p.name in pipeline_names_to_deploy:
             existing_pipelines[p.name] = p.pipeline_id
             print(f"  ✓ Found existing: {p.name} (ID: {p.pipeline_id})")
+
+    print(f"  Checked {len(filtered_pipelines)} pipeline(s) matching '{CONNECTOR_NAME.upper()}'")
 except Exception as e:
     print(f"  ! Error listing pipelines: {e}")
 
@@ -440,13 +446,26 @@ if 'jobs' in dab_config.get('resources', {}) and EMIT_SCHEDULED_JOBS:
     existing_jobs = {}
 
     try:
-        all_jobs = list(w.jobs.list())
-        for j in all_jobs:
-            if j.settings and j.settings.name in job_names_to_deploy:
-                existing_jobs[j.settings.name] = j.job_id
-                print(f"  ✓ Found existing: {j.settings.name} (ID: {j.job_id})")
+        # Note: jobs.list() doesn't support pattern matching, only exact name
+        # So we iterate through job_names_to_deploy and check each one individually
+        # This is more efficient than listing all jobs in the workspace
+        checked_count = 0
+        for job_name in job_names_to_deploy.keys():
+            try:
+                # Try to find job by exact name (case insensitive)
+                matching_jobs = list(w.jobs.list(name=job_name, limit=1))
+                if matching_jobs:
+                    job = matching_jobs[0]
+                    existing_jobs[job_name] = job.job_id
+                    print(f"  ✓ Found existing: {job_name} (ID: {job.job_id})")
+                checked_count += 1
+            except Exception:
+                # Job doesn't exist, will create new
+                pass
+
+        print(f"  Checked {checked_count} job(s) by name")
     except Exception as e:
-        print(f"  ! Error listing jobs: {e}")
+        print(f"  ! Error checking jobs: {e}")
 
     if not existing_jobs:
         print("  No existing jobs found - will create new ones")
