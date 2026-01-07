@@ -36,7 +36,7 @@ DEST_SCHEMA = "bronze"
 
 # DISCOVERY OPTIONS (set USE_PRESET=True to skip discovery)
 USE_PRESET = False  # Set to True to use preset CSV instead of discovery
-PRESET_CSV_PATH = f"../examples/{CONNECTOR_NAME}/preset_by_category_and_ingestion.csv"
+# PRESET_CSV_PATH will be set after USERNAME is defined (see below)
 
 # GROUPING STRATEGY (only used if USE_PRESET=False)
 GROUP_BY = "category_and_ingestion_type"  # Options: category_and_ingestion_type, ingestion_type, category, none
@@ -72,6 +72,8 @@ PAUSE_JOBS = True  # Create jobs in PAUSED state
 TOOLS_DIR_WORKSPACE = f"/Workspace/Users/{USERNAME}/lakeflow-community-connectors/tools/load_balanced_deployment"
 # Connector source path in workspace - needed for discovery
 CONNECTOR_SOURCE_WORKSPACE = f"/Workspace/Users/{USERNAME}/lakeflow-community-connectors/sources/{CONNECTOR_NAME}/{CONNECTOR_NAME}.py"
+# Preset CSV path (workspace location)
+PRESET_CSV_PATH = f"/Workspace/Users/{USERNAME}/lakeflow-community-connectors/tools/load_balanced_deployment/examples/{CONNECTOR_NAME}/preset_by_category_and_ingestion.csv"
 
 # COMMAND ----------
 
