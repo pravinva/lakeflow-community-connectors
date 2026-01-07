@@ -50,11 +50,14 @@ import uuid
 
 USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
 
-# OUTPUT PATHS (using DBFS with user-specific subdirectory)
-WORK_DIR = f"/dbfs/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{uuid.uuid4().hex[:8]}"
-CSV_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_tables.csv"
-INGEST_FILES_DIR = f"{WORK_DIR}/{CONNECTOR_NAME}_ingest_files"
-DAB_YAML_PATH = f"{WORK_DIR}/{CONNECTOR_NAME}_bundle/databricks.yml"
+# OUTPUT PATHS (using DBFS paths accessed via dbfs: scheme)
+# Note: Use dbfs:/ scheme for DBFS operations, /dbfs/ for local file access
+WORK_DIR_DBFS = f"dbfs:/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{uuid.uuid4().hex[:8]}"
+WORK_DIR_LOCAL = WORK_DIR_DBFS.replace("dbfs:", "/dbfs")  # Local mount path for file operations
+
+CSV_PATH = f"{WORK_DIR_LOCAL}/{CONNECTOR_NAME}_tables.csv"
+INGEST_FILES_DIR = f"{WORK_DIR_LOCAL}/{CONNECTOR_NAME}_ingest_files"
+DAB_YAML_PATH = f"{WORK_DIR_LOCAL}/{CONNECTOR_NAME}_bundle/databricks.yml"
 WORKSPACE_INGEST_PATH = f"/Workspace/Users/{USERNAME}/{CONNECTOR_NAME}_ingest"
 CLUSTER_NUM_WORKERS = 2
 EMIT_SCHEDULED_JOBS = True
@@ -80,16 +83,17 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ExportFormat
 import base64
 
-# Create work directories
-Path(WORK_DIR).mkdir(parents=True, exist_ok=True)
-Path(INGEST_FILES_DIR).mkdir(parents=True, exist_ok=True)
-Path(DAB_YAML_PATH).parent.mkdir(parents=True, exist_ok=True)
-print(f"Using work directory: {WORK_DIR}")
+# Create work directories using dbutils.fs for DBFS
+dbutils.fs.mkdirs(WORK_DIR_DBFS)
+dbutils.fs.mkdirs(f"{WORK_DIR_DBFS}/{CONNECTOR_NAME}_ingest_files")
+dbutils.fs.mkdirs(f"{WORK_DIR_DBFS}/{CONNECTOR_NAME}_bundle")
+print(f"Using work directory: {WORK_DIR_LOCAL}")
 
 # Copy tool scripts to DBFS work directory for subprocess access
 # The /Workspace/Repos/ path is not accessible from subprocess in notebooks
-SCRIPTS_DIR = f"{WORK_DIR}/scripts"
-Path(SCRIPTS_DIR).mkdir(parents=True, exist_ok=True)
+SCRIPTS_DIR_DBFS = f"{WORK_DIR_DBFS}/scripts"
+SCRIPTS_DIR = f"{WORK_DIR_LOCAL}/scripts"
+dbutils.fs.mkdirs(SCRIPTS_DIR_DBFS)
 
 # Get the current notebook's directory to find scripts
 # Use workspace API to export scripts from Repos
