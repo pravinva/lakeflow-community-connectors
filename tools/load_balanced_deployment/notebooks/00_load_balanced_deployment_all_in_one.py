@@ -79,14 +79,14 @@ dbutils.widgets.dropdown("group_by", "category_and_ingestion_type",
                         ["category_and_ingestion_type", "ingestion_type", "category", "none"],
                         "Group Tables By")
 dbutils.widgets.text("secrets_scope", "sp-osipi", "Secrets Scope (for discovery)")
-dbutils.widgets.text("secrets_token_key", "access_token", "Secret Key Name")
+dbutils.widgets.text("secrets_mapping", '{"access_token": "access_token"}', "Secret Keys Mapping (JSON)")
 dbutils.widgets.text("cluster_num_workers", "2", "Cluster Workers")
 dbutils.widgets.dropdown("emit_scheduled_jobs", "true", ["true", "false"], "Create Scheduled Jobs")
 dbutils.widgets.dropdown("pause_jobs", "true", ["true", "false"], "Pause Jobs Initially")
 
 GROUP_BY = dbutils.widgets.get("group_by")
 SECRETS_SCOPE = dbutils.widgets.get("secrets_scope")
-SECRETS_TOKEN_KEY = dbutils.widgets.get("secrets_token_key")
+SECRETS_MAPPING = dbutils.widgets.get("secrets_mapping")
 CLUSTER_NUM_WORKERS = int(dbutils.widgets.get("cluster_num_workers"))
 EMIT_SCHEDULED_JOBS = dbutils.widgets.get("emit_scheduled_jobs") == "true"
 PAUSE_JOBS = dbutils.widgets.get("pause_jobs") == "true"
@@ -125,6 +125,7 @@ print(f"User:             {USERNAME}")
 print(f"Work Directory:   {WORK_DIR}")
 if not USE_PRESET:
     print(f"Secrets Scope:    {SECRETS_SCOPE}")
+    print(f"Secrets Mapping:  {SECRETS_MAPPING}")
 print("="*70)
 
 # COMMAND ----------
@@ -209,17 +210,19 @@ if not USE_PRESET:
     print(f"Discovering tables from {CONNECTOR_NAME} connector...")
     print(f"Loading credentials from Databricks secrets...")
 
-    # Load credentials from dbutils.secrets
+    # Load credentials from dbutils.secrets using mapping
     import json
     try:
-        access_token = dbutils.secrets.get(SECRETS_SCOPE, SECRETS_TOKEN_KEY)
+        # Parse secrets mapping: {"init_option_key": "secret_key_name"}
+        secrets_map = json.loads(SECRETS_MAPPING)
 
-        # Build init_options - connector-specific, adjust as needed
-        init_options = {
-            "access_token": access_token
-        }
+        init_options = {}
+        for init_key, secret_key in secrets_map.items():
+            secret_value = dbutils.secrets.get(SECRETS_SCOPE, secret_key)
+            init_options[init_key] = secret_value
+            print(f"  ✓ Loaded {init_key} from {SECRETS_SCOPE}/{secret_key}")
+
         init_options_json = json.dumps(init_options)
-        print(f"  ✓ Loaded credentials from {SECRETS_SCOPE}/{SECRETS_TOKEN_KEY}")
 
     except Exception as e:
         print(f"  ✗ Failed to load credentials: {e}")
