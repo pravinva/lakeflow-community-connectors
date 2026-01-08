@@ -766,6 +766,9 @@ print("="*60)
 print("STARTING ALL PIPELINES")
 print("="*60)
 
+# Get current workspace URL
+workspace_url = spark.conf.get("spark.databricks.workspaceUrl")
+
 for name, pipeline_id in deployed_pipelines.items():
     print(f"\nStarting pipeline: {name}")
     print(f"  Pipeline ID: {pipeline_id}")
@@ -776,13 +779,13 @@ for name, pipeline_id in deployed_pipelines.items():
             full_refresh=False  # Set to True for full refresh
         )
         print(f"  ✓ Started (Update ID: {update.update_id})")
-        print(f"  Monitor at: https://dogfood.cloud.databricks.com/#joblist/pipelines/{pipeline_id}")
+        print(f"  Monitor at: https://{workspace_url}/#joblist/pipelines/{pipeline_id}")
     except Exception as e:
         print(f"  ✗ Failed to start: {e}")
 
 print(f"\n✓ Started {len(deployed_pipelines)} pipelines")
 print(f"\nMonitor all pipelines at:")
-print(f"  https://dogfood.cloud.databricks.com/#joblist/pipelines")
+print(f"  https://{workspace_url}/#joblist/pipelines")
 
 # COMMAND ----------
 
