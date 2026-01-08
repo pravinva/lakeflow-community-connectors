@@ -101,7 +101,6 @@ PAUSE_JOBS = dbutils.widgets.get("pause_jobs") == "true"
 import os
 
 USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
-DATABRICKS_PROFILE = "dogfood"
 
 # Local temp paths
 WORK_DIR = f"/tmp/{USERNAME.replace('@', '_').replace('.', '_')}/load_balanced_deployment_{CONNECTOR_NAME}"
