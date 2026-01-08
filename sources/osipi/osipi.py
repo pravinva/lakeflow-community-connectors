@@ -1061,6 +1061,129 @@ class LakeflowConnect:
             params.append(("selectedFields", str(selected_fields)))
         return params
 
+    def _paginate_time_series(
+        self,
+        get_data_func,
+        start_str: str,
+        end_str: str,
+        max_count: int,
+    ) -> Iterator[dict]:
+        """
+        Generic pagination for time-series endpoints using time-based cursors.
+
+        The PI Web API limits responses to maxCount records per request. For time-series
+        endpoints (recorded, interpolated), we implement pagination by:
+        1. Making a request with startTime/endTime
+        2. Finding the last timestamp across all streams in the response
+        3. Using that timestamp + 1 microsecond as the new startTime
+        4. Repeating until we get fewer records than maxCount
+
+        Per PI Web API documentation:
+        - Time-series values are returned in ascending timestamp order by default
+        - For StreamSets: maxCount is applied as TOTAL across all streams (divided among them)
+        - For single streams: maxCount is the limit for that stream
+
+        Args:
+            get_data_func: A callable that takes (start_str, end_str) and returns API response data
+            start_str: Initial start time (ISO 8601 format)
+            end_str: End time (ISO 8601 format)
+            max_count: Maximum records per request
+
+        Yields:
+            Items from the paginated results (format depends on the endpoint)
+        """
+        current_start = start_str
+        page_count = 0
+        total_records = 0
+
+        while True:
+            page_count += 1
+
+            # Call the provided function to get data for this page
+            data = get_data_func(current_start, end_str)
+
+            # Handle both single-stream and multi-stream (streamset) responses
+            items_container = data.get("Items", []) or []
+            if not items_container:
+                break
+
+            # Track timestamps across all streams
+            # For streamsets: use MINIMUM last timestamp since maxCount is divided across streams
+            # For single streams: use the last timestamp
+            last_timestamps: List[datetime] = []
+            page_record_count = 0
+
+            # Check if this is a streamset response (list of streams) or single stream
+            is_streamset = isinstance(items_container, list) and len(items_container) > 0 and isinstance(items_container[0], dict) and "WebId" in items_container[0]
+
+            if is_streamset:
+                # StreamSet response: Items is a list of streams, each with its own Items
+                for stream in items_container:
+                    stream_items = stream.get("Items", []) or []
+                    page_record_count += len(stream_items)
+
+                    # Track the last timestamp from this stream
+                    stream_last_ts = None
+                    for item in stream_items:
+                        ts = item.get("Timestamp")
+                        if ts:
+                            try:
+                                ts_dt = _parse_ts(ts)
+                                if stream_last_ts is None or ts_dt > stream_last_ts:
+                                    stream_last_ts = ts_dt
+                            except Exception:
+                                pass
+
+                    if stream_last_ts:
+                        last_timestamps.append(stream_last_ts)
+
+                    # Yield the entire stream (caller will process its items)
+                    yield stream
+            else:
+                # Single stream response: Items is the list of data points
+                page_record_count = len(items_container)
+
+                # Track the last timestamp
+                for item in items_container:
+                    ts = item.get("Timestamp")
+                    if ts:
+                        try:
+                            ts_dt = _parse_ts(ts)
+                            last_timestamps.append(ts_dt)
+                        except Exception:
+                            pass
+
+                    # Yield each item
+                    yield item
+
+            total_records += page_record_count
+
+            # If we got fewer records than maxCount, we've reached the end
+            if page_record_count < max_count:
+                break
+
+            # If we didn't find any valid timestamps, we can't continue pagination
+            if not last_timestamps:
+                break
+
+            # For streamsets: use MIN timestamp (since maxCount is divided, some streams may be cut off earlier)
+            # For single streams: use MAX timestamp (last record)
+            if is_streamset:
+                last_timestamp = min(last_timestamps)
+            else:
+                last_timestamp = max(last_timestamps)
+
+            # Advance the cursor: use the last timestamp as the new start
+            # Add 1 microsecond to avoid retrieving the same record again
+            current_start = _isoformat_z(last_timestamp + timedelta(microseconds=1))
+
+            # Safety check: if the new start time is beyond the end time, stop
+            try:
+                if _parse_ts(current_start) >= _parse_ts(end_str):
+                    break
+            except Exception:
+                break
+
     def _get_json(self, path: str, params: Optional[Any] = None) -> dict:
 
         url = f"{self.base_url}{path}"
@@ -1300,15 +1423,20 @@ class LakeflowConnect:
                 for group in groups:
                     if not group:
                         continue
-                    params = self._build_streamset_params(
-                        group,
-                        start_str=start_str,
-                        end_str=end_str,
-                        max_count=max_count,
-                        selected_fields=selected_fields,
-                    )
-                    data = self._get_json("/piwebapi/streamsets/recorded", params=params)
-                    for stream in data.get("Items", []) or []:
+
+                    # Define a function that makes the API call for pagination
+                    def get_data(start: str, end: str) -> dict:
+                        params = self._build_streamset_params(
+                            group,
+                            start_str=start,
+                            end_str=end,
+                            max_count=max_count,
+                            selected_fields=selected_fields,
+                        )
+                        return self._get_json("/piwebapi/streamsets/recorded", params=params)
+
+                    # Use pagination helper to handle large result sets
+                    for stream in self._paginate_time_series(get_data, start_str, end_str, max_count):
                         webid = stream.get("WebId")
                         if not webid:
                             continue
@@ -1384,15 +1512,20 @@ class LakeflowConnect:
             for group in groups:
                 if not group:
                     continue
-                params = self._build_streamset_params(
-                    group,
-                    start_str=start_str,
-                    end_str=end_str,
-                    max_count=max_count,
-                    selected_fields=selected_fields,
-                )
-                data = self._get_json("/piwebapi/streamsets/recorded", params=params)
-                for stream in data.get("Items", []) or []:
+
+                # Define a function that makes the API call for pagination
+                def get_data(start: str, end: str) -> dict:
+                    params = self._build_streamset_params(
+                        group,
+                        start_str=start,
+                        end_str=end,
+                        max_count=max_count,
+                        selected_fields=selected_fields,
+                    )
+                    return self._get_json("/piwebapi/streamsets/recorded", params=params)
+
+                # Use pagination helper to handle large result sets
+                for stream in self._paginate_time_series(get_data, start_str, end_str, max_count):
                     webid = stream.get("WebId")
                     if not webid:
                         continue
@@ -1458,28 +1591,32 @@ class LakeflowConnect:
                     continue
                 # Prefer streamsets/interpolated when multiple tags
                 if len(group) > 1:
-                    params = self._build_streamset_params(
-                        group,
-                        start_str=start_str,
-                        end_str=end_str,
-                        interval=interval,
-                        max_count=max_count,
-                        selected_fields=selected_fields,
-                    )
+                    # Define a function that makes the API call for pagination
+                    def get_data(start: str, end: str) -> dict:
+                        params = self._build_streamset_params(
+                            group,
+                            start_str=start,
+                            end_str=end,
+                            interval=interval,
+                            max_count=max_count,
+                            selected_fields=selected_fields,
+                        )
+                        return self._get_json("/piwebapi/streamsets/interpolated", params=params)
+
                     try:
-                        data = self._get_json("/piwebapi/streamsets/interpolated", params=params)
-                    except requests.exceptions.HTTPError as e:
-                        if getattr(e.response, 'status_code', None) == 404:
-                            data = None
-                        else:
-                            raise
-                    if data:
-                        for stream in data.get("Items", []) or []:
+                        # Use pagination helper to handle large result sets
+                        for stream in self._paginate_time_series(get_data, start_str, end_str, max_count):
                             wid = stream.get("WebId")
                             if not wid:
                                 continue
                             yield from emit_items(wid, stream.get("Items", []) or [])
                         continue
+                    except requests.exceptions.HTTPError as e:
+                        if getattr(e.response, 'status_code', None) == 404:
+                            # Interpolated endpoint not available, fall through to batch method
+                            pass
+                        else:
+                            raise
 
                 # Fallback: per-tag interpolated via batch
                 reqs = [
