@@ -1107,22 +1107,46 @@ class LakeflowConnect:
             if not items_container:
                 break
 
-            # Track timestamps across all streams
-            # For streamsets: use MINIMUM last timestamp since maxCount is divided across streams
-            # For single streams: use the last timestamp
-            last_timestamps: List[datetime] = []
-            page_record_count = 0
-
             # Check if this is a streamset response (list of streams) or single stream
-            is_streamset = isinstance(items_container, list) and len(items_container) > 0 and isinstance(items_container[0], dict) and "WebId" in items_container[0]
+            is_streamset = (
+                isinstance(items_container, list)
+                and len(items_container) > 0
+                and isinstance(items_container[0], dict)
+                and "WebId" in items_container[0]
+            )
 
+            # First pass: count records and yield items
+            page_record_count = 0
             if is_streamset:
                 # StreamSet response: Items is a list of streams, each with its own Items
                 for stream in items_container:
                     stream_items = stream.get("Items", []) or []
                     page_record_count += len(stream_items)
+                    # Yield the entire stream (caller will process its items)
+                    yield stream
+            else:
+                # Single stream response: Items is the list of data points
+                page_record_count = len(items_container)
+                # Yield each item
+                for item in items_container:
+                    yield item
 
-                    # Track the last timestamp from this stream
+            total_records += page_record_count
+
+            # If we got fewer records than maxCount, we've reached the end
+            # No need to track timestamps since we won't paginate further
+            if page_record_count < max_count:
+                break
+
+            # Only track timestamps if we need to paginate to the next page
+            # Track timestamps across all streams
+            # For streamsets: use MINIMUM last timestamp since maxCount is divided
+            # For single streams: use the last timestamp
+            last_timestamps: List[datetime] = []
+            if is_streamset:
+                # StreamSet: track last timestamp from each stream
+                for stream in items_container:
+                    stream_items = stream.get("Items", []) or []
                     stream_last_ts = None
                     for item in stream_items:
                         ts = item.get("Timestamp")
@@ -1133,17 +1157,10 @@ class LakeflowConnect:
                                     stream_last_ts = ts_dt
                             except Exception:
                                 pass
-
                     if stream_last_ts:
                         last_timestamps.append(stream_last_ts)
-
-                    # Yield the entire stream (caller will process its items)
-                    yield stream
             else:
-                # Single stream response: Items is the list of data points
-                page_record_count = len(items_container)
-
-                # Track the last timestamp
+                # Single stream: track all timestamps
                 for item in items_container:
                     ts = item.get("Timestamp")
                     if ts:
@@ -1152,15 +1169,6 @@ class LakeflowConnect:
                             last_timestamps.append(ts_dt)
                         except Exception:
                             pass
-
-                    # Yield each item
-                    yield item
-
-            total_records += page_record_count
-
-            # If we got fewer records than maxCount, we've reached the end
-            if page_record_count < max_count:
-                break
 
             # If we didn't find any valid timestamps, we can't continue pagination
             if not last_timestamps:
