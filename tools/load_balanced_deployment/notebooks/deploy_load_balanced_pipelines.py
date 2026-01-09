@@ -17,6 +17,18 @@
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Install Dependencies
+# MAGIC
+# MAGIC Install required Python packages for DAB YAML generation.
+
+# COMMAND ----------
+
+%pip install pyyaml databricks-sdk --quiet
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Configuration
 # MAGIC
 # MAGIC **Basic Settings:**
