@@ -688,13 +688,35 @@ if EMIT_SCHEDULED_JOBS and 'deployed_jobs' in locals():
 # MAGIC %md
 # MAGIC ## (Optional) Cleanup
 # MAGIC
-# MAGIC Clean up temporary work directories.
+# MAGIC Delete deployed pipelines and jobs.
 
 # COMMAND ----------
 
-# Uncomment to clean up work directories
+# Uncomment to delete all deployed pipelines and jobs
+# print("Deleting pipelines and jobs...")
+#
+# # Delete jobs first (they depend on pipelines)
+# if EMIT_SCHEDULED_JOBS and 'deployed_jobs' in dir():
+#     for job_name, job_id in deployed_jobs.items():
+#         try:
+#             w.jobs.delete(job_id=job_id)
+#             print(f"  ✓ Deleted job: {job_name} (ID: {job_id})")
+#         except Exception as e:
+#             print(f"  ✗ Failed to delete job {job_name}: {e}")
+#
+# # Delete pipelines
+# if 'deployed_pipelines' in dir():
+#     for pipeline_key, pipeline_id in deployed_pipelines.items():
+#         try:
+#             w.pipelines.delete(pipeline_id=pipeline_id)
+#             print(f"  ✓ Deleted pipeline: {pipeline_key} (ID: {pipeline_id})")
+#         except Exception as e:
+#             print(f"  ✗ Failed to delete pipeline {pipeline_key}: {e}")
+#
+# # Clean up work directories
 # import shutil
 # if Path(WORK_DIR).exists():
 #     shutil.rmtree(WORK_DIR)
-#     print(f"Cleaned up: {WORK_DIR}")
-# print("Cleanup complete!")
+#     print(f"  ✓ Cleaned up work directory: {WORK_DIR}")
+#
+# print("\nCleanup complete!")
