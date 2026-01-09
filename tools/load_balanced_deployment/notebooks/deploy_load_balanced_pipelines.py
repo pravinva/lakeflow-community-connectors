@@ -75,6 +75,9 @@ notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext(
 # Notebook is at: {repo}/tools/load_balanced_deployment/notebooks/deploy_load_balanced_pipelines
 # So repo base is 4 levels up from tools/load_balanced_deployment/notebooks/deploy_load_balanced_pipelines
 REPO_BASE_PATH = "/".join(notebook_path.split("/")[:-4])
+# Ensure path starts with /Workspace (notebookPath doesn't include it)
+if not REPO_BASE_PATH.startswith("/Workspace"):
+    REPO_BASE_PATH = f"/Workspace{REPO_BASE_PATH}"
 
 # Hardcoded schedule defaults (sensible defaults for most use cases)
 # Users can customize by editing generated DAB YAML if needed
