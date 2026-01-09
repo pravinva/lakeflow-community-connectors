@@ -111,6 +111,9 @@ import os
 from pathlib import Path
 from datetime import datetime
 
+# Get current user
+USERNAME = spark.sql("SELECT current_user()").collect()[0][0]
+
 # Work directories (local /tmp for subprocess execution)
 # Use timestamped directory to avoid caching issues
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
